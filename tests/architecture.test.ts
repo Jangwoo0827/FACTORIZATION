@@ -22,12 +22,14 @@ function filesUnder(dir: string): string[] {
 }
 
 describe('architecture boundaries', () => {
-  it('keeps Phaser out of sim, core, data and input', () => {
+  it('keeps the renderer out of sim, core, data and input', () => {
+    // This boundary is not theoretical: it is what let the renderer change from
+    // Phaser to three.js without touching the simulation.
     const offenders: string[] = [];
     for (const layer of ['sim', 'core', 'data', 'input']) {
       for (const file of filesUnder(join(SRC, layer))) {
         const source = readFileSync(file, 'utf8');
-        if (/from\s+['"]phaser['"]/.test(source)) offenders.push(file);
+        if (/from\s+['"](three|phaser)['"]/.test(source)) offenders.push(file);
       }
     }
     expect(offenders).toEqual([]);

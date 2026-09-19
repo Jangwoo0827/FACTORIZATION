@@ -7,7 +7,7 @@
  * so touch has a path to actions that otherwise live on keys.
  */
 
-import type { Vec2, ViewRotation } from '../core/iso';
+import type { Vec2 } from '../core/grid';
 import type { BuildingDef, Rotation } from '../sim/types';
 
 export interface HudCallbacks {
@@ -22,16 +22,16 @@ export interface HudCallbacks {
 export interface HudStatus {
   tile: Vec2 | null;
   rotation: Rotation;
-  viewRotation: ViewRotation;
+  /** Camera yaw in radians. Continuous now, not four fixed steps. */
+  yaw: number;
   buildings: number;
+  /** Vertical extent of the view in tiles. */
   zoom: number;
   detail: string;
   problem: string | null;
 }
 
 const ROTATION_LABEL = ['N', 'E', 'S', 'W'] as const;
-/** Which map corner the view is looking from. */
-const VIEW_LABEL = ['북', '동', '남', '서'] as const;
 
 export class Hud {
   private readonly buttons = new Map<string, HTMLButtonElement>();
@@ -75,10 +75,11 @@ export class Hud {
 
   setStatus(status: HudStatus): void {
     const tile = status.tile ? `${status.tile.x}, ${status.tile.y}` : '—';
+    const yawDegrees = Math.round((((status.yaw * 180) / Math.PI) % 360 + 360) % 360);
     this.statusEl.textContent =
       `타일 ${tile} · 방향 ${ROTATION_LABEL[status.rotation]} · ` +
-      `시점 ${VIEW_LABEL[status.viewRotation]} · ` +
-      `건물 ${status.buildings} · 줌 ${status.zoom.toFixed(2)}x`;
+      `시점 ${yawDegrees}° · ` +
+      `건물 ${status.buildings} · 시야 ${status.zoom.toFixed(0)}타일`;
     this.detailEl.textContent = status.detail;
     this.problemEl.textContent = status.problem ?? '';
     this.problemEl.classList.toggle('is-visible', status.problem !== null);

@@ -4,9 +4,9 @@ import { Ore, Terrain, type BuildingDef } from '../src/sim/types';
 import { World } from '../src/sim/world';
 
 const DEFS: BuildingDef[] = [
-  { id: 'belt', name: 'belt', w: 1, h: 1, color: 0, lift: 0, needsOre: false },
-  { id: 'big', name: 'big', w: 3, h: 2, color: 0, lift: 0, needsOre: false },
-  { id: 'miner', name: 'miner', w: 2, h: 2, color: 0, lift: 0, needsOre: true },
+  { id: 'belt', name: 'belt', w: 1, h: 1, color: 0, height: 0, needsOre: false },
+  { id: 'big', name: 'big', w: 3, h: 2, color: 0, height: 0, needsOre: false },
+  { id: 'miner', name: 'miner', w: 2, h: 2, color: 0, height: 0, needsOre: true },
 ];
 const DEF_MAP = new Map(DEFS.map((d) => [d.id, d]));
 

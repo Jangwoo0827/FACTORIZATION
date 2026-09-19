@@ -7,7 +7,7 @@
  * between consecutive samples instead of only the sampled ones.
  */
 
-import type { Vec2 } from './iso';
+import type { Vec2 } from './grid';
 
 /** Safety valve for a pathological jump (e.g. a pointer warp across the map). */
 const MAX_LINE_TILES = 512;

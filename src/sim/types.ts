@@ -47,8 +47,8 @@ export interface BuildingDef {
   readonly w: number;
   readonly h: number;
   readonly color: number;
-  /** Visual lift of the top face, in pixels. Kept <= 2 tiles (GDD 4.1). */
-  readonly lift: number;
+  /** Height in world units (1 unit = 1 tile), for the placeholder box mesh. */
+  readonly height: number;
   /** Miners must sit on ore (GDD 6.1). */
   readonly needsOre: boolean;
 }
