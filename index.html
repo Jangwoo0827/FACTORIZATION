@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- viewport-fit=cover so safe-area insets are usable on notched phones. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="color-scheme" content="dark" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <title>Factorization</title>
+  </head>
+  <body>
+    <div id="game"></div>
+
+    <div id="hud">
+      <div class="hud__top">
+        <div class="panel hud__info">
+          <div id="hud-status">타일 — · 방향 N · 건물 0 · 줌 1.00x</div>
+          <div id="hud-detail">—</div>
+          <div id="hud-problem"></div>
+        </div>
+        <div class="hud__controls" id="hud-controls">
+          <button class="icon-button" type="button" data-action="rotate" title="회전 (R)" aria-label="회전">
+            ↻
+          </button>
+          <button class="icon-button" type="button" data-action="undo" title="실행 취소 (Ctrl+Z)" aria-label="실행 취소">
+            ↶
+          </button>
+          <button class="icon-button" type="button" data-action="redo" title="다시 실행 (Ctrl+Y)" aria-label="다시 실행">
+            ↷
+          </button>
+        </div>
+      </div>
+
+      <div></div>
+
+      <div class="hud__bottom">
+        <div id="hud-hint"></div>
+        <div class="hud__buildbar" id="hud-buildbar"></div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

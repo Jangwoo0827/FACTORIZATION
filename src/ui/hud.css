@@ -1,0 +1,255 @@
+/* HUD overlay styling (GDD 11.1, 12.2).
+   Layout targets phone-in-landscape first; everything scales up from there. */
+
+:root {
+  --bg: #0e1216;
+  --panel: rgba(18, 24, 30, 0.86);
+  --panel-border: rgba(140, 170, 190, 0.18);
+  --text: #dbe4ea;
+  --text-dim: #8b9aa6;
+  --accent: #58b2e8;
+  --danger: #e4635c;
+  --radius: 10px;
+  /* GDD 12.2: minimum 44px touch targets. */
+  --touch: 44px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Pretendard', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  /* Stops pull-to-refresh and rubber-banding from fighting the camera. */
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#game {
+  position: fixed;
+  inset: 0;
+}
+
+#game canvas {
+  display: block;
+  touch-action: none;
+}
+
+#hud {
+  position: fixed;
+  inset: 0;
+  /* The overlay must not eat camera gestures; only its controls opt back in. */
+  pointer-events: none;
+  padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right))
+    max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  /* minmax(0, 1fr), not the default `auto`: an auto track is floored at its
+     min-content width, so the build bar's full row of buttons would widen the
+     single column past the viewport and carry every other row off-screen with it.
+     Pinning the column is what lets the bar scroll instead of overflowing. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
+.panel {
+  pointer-events: auto;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  backdrop-filter: blur(6px);
+}
+
+/* ---------------------------------------------------------------- top row */
+
+.hud__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.hud__info {
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  max-width: min(60vw, 420px);
+  /* A flex item defaults to min-width:auto, which lets long status text push past
+     max-width and shove the control buttons off a narrow screen. */
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+#hud-status {
+  color: var(--text-dim);
+}
+
+#hud-detail {
+  font-weight: 600;
+}
+
+#hud-problem {
+  display: none;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+#hud-problem.is-visible {
+  display: block;
+}
+
+.hud__controls {
+  display: flex;
+  gap: 8px;
+  /* These are the only path to rotate/undo on touch — never let them shrink away. */
+  flex: 0 0 auto;
+}
+
+.icon-button {
+  pointer-events: auto;
+  width: var(--touch);
+  height: var(--touch);
+  display: grid;
+  place-items: center;
+  font-size: 18px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.icon-button:hover {
+  border-color: var(--accent);
+}
+
+.icon-button:active {
+  transform: translateY(1px);
+}
+
+/* ---------------------------------------------------------------- bottom */
+
+.hud__bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+#hud-hint {
+  pointer-events: none;
+  font-size: 12px;
+  color: var(--text-dim);
+  text-align: center;
+  /* Needs its own plate: the map underneath is busy, and a text shadow alone
+     is not enough contrast over ore patches. */
+  padding: 5px 12px;
+  max-width: 100%;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+}
+
+#hud-hint:empty {
+  display: none;
+}
+
+.hud__buildbar {
+  pointer-events: auto;
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+}
+
+.hud__buildbar::-webkit-scrollbar {
+  display: none;
+}
+
+.tool {
+  flex: 0 0 auto;
+  min-width: 72px;
+  min-height: var(--touch);
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  align-items: center;
+  gap: 2px 8px;
+  padding: 6px 10px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.tool:hover {
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.tool.is-active {
+  border-color: var(--accent);
+  background: rgba(88, 178, 232, 0.16);
+}
+
+.tool__swatch {
+  grid-row: 1 / 3;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+}
+
+.tool__swatch--erase {
+  background: var(--danger);
+}
+
+.tool__name {
+  font-size: 13px;
+  text-align: left;
+}
+
+.tool__size {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: left;
+}
+
+/* ---------------------------------------------------------------- adaptive */
+
+/* Coarse pointers get roomier targets and drop hover-only affordances. */
+@media (pointer: coarse) {
+  :root {
+    --touch: 48px;
+  }
+
+  .tool {
+    min-width: 84px;
+  }
+}
+
+/* Portrait phones: keep the map area as tall as possible. */
+@media (max-width: 560px) {
+  .hud__info {
+    font-size: 12px;
+    max-width: 65vw;
+  }
+
+  .tool__size {
+    display: none;
+  }
+}
