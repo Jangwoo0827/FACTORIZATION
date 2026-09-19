@@ -33,6 +33,9 @@ import type { Vec2 } from '../core/grid';
 
 const GROUND = new Plane(new Vector3(0, 1, 0), 0);
 
+/** Orbit sensitivity. One full screen-height drag turns the view about 70 degrees. */
+const ORBIT_RADIANS_PER_PIXEL = 0.006;
+
 export class CameraRig {
   readonly camera: OrthographicCamera;
 
@@ -89,29 +92,57 @@ export class CameraRig {
     this.apply();
   }
 
-  /** Moves the focus point across the ground, matching the drag one-to-one. */
+  /**
+   * Drags the ground under the cursor: whatever point you grabbed stays under the
+   * pointer for the whole drag.
+   *
+   * Both axes must obey that. Having one axis follow the cursor while the other
+   * opposed it is what made the camera feel wrong, and it reads as "the Y axis is
+   * inverted" because the horizontal axis is the one that looked right.
+   * `tests/CameraRig.test.ts` pins the invariant against the real projection.
+   */
   panScreen(dx: number, dy: number): void {
     const perPixel = this.viewSize / this.viewportHeight;
-
-    // Horizontal drag slides along the camera's right vector.
     const cosYaw = Math.cos(this.yawAngle);
     const sinYaw = Math.sin(this.yawAngle);
 
-    // Vertical drag slides along the ground away from the camera. Shallow angles
-    // cover more ground per pixel, so divide by sin(pitch) to keep it one-to-one.
+    // The ground is foreshortened vertically by sin(pitch), so a pixel of vertical
+    // drag covers more ground the shallower the camera sits. Dividing by it is
+    // what keeps the grabbed point pinned rather than sliding.
     const depthPerPixel = perPixel / Math.max(Math.sin(this.pitchAngle), 0.15);
 
+    // Screen right on the ground is (cos, 0, -sin); screen up is -(sin, 0, cos).
+    // The focus point moves opposite the drag, so the world moves with it.
     this.target.x -= cosYaw * dx * perPixel;
     this.target.z += sinYaw * dx * perPixel;
-    this.target.x += sinYaw * dy * depthPerPixel;
-    this.target.z += cosYaw * dy * depthPerPixel;
+    this.target.x -= sinYaw * dy * depthPerPixel;
+    this.target.z -= cosYaw * dy * depthPerPixel;
 
     this.apply();
   }
 
-  orbit(dYaw: number, dPitch: number): void {
-    this.yawAngle += dYaw;
-    this.pitchAngle = MathUtils.clamp(this.pitchAngle + dPitch, MIN_PITCH, MAX_PITCH);
+  /** Moves the focus point in tiles, relative to the current yaw. Keyboard pan. */
+  panGround(right: number, forward: number): void {
+    const cosYaw = Math.cos(this.yawAngle);
+    const sinYaw = Math.sin(this.yawAngle);
+    this.target.x += right * cosYaw - forward * sinYaw;
+    this.target.z += -right * sinYaw - forward * cosYaw;
+    this.apply();
+  }
+
+  /**
+   * Turns the camera from a screen drag, following the three.js OrbitControls
+   * convention that most people already have in their hands: the near face of the
+   * scene follows the cursor. Dragging right spins the scene right; dragging down
+   * tips its top toward you, so you end up looking more from above.
+   */
+  orbit(dx: number, dy: number): void {
+    this.yawAngle -= dx * ORBIT_RADIANS_PER_PIXEL;
+    this.pitchAngle = MathUtils.clamp(
+      this.pitchAngle + dy * ORBIT_RADIANS_PER_PIXEL,
+      MIN_PITCH,
+      MAX_PITCH,
+    );
     this.apply();
   }
 

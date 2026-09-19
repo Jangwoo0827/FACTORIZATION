@@ -15,6 +15,7 @@ import {
 } from 'three';
 import {
   DEFAULT_SEED,
+  DEFAULT_VIEW_SIZE,
   KEYBOARD_PAN_TILES_PER_SEC,
   MAP_SIZE,
   YAW_SPEED,
@@ -105,7 +106,7 @@ export class Game {
       handlers: {
         onPan: (dx, dy) => this.rig.panScreen(dx, dy),
         onOrbit: (dx, dy) => {
-          this.rig.orbit(-dx * 0.006, -dy * 0.006);
+          this.rig.orbit(dx, dy);
           this.refreshHud();
         },
         onZoom: (factor, focus) => {
@@ -159,9 +160,11 @@ export class Game {
 
     const pan = this.adapter.keyboardPan();
     if (pan.x !== 0 || pan.y !== 0) {
-      const speed = KEYBOARD_PAN_TILES_PER_SEC * delta * (this.rig.zoom / 44);
-      // Keyboard pan is expressed in screen space too, so it agrees with dragging.
-      this.rig.panScreen(-pan.x * speed * 20, -pan.y * speed * 20);
+      // Scaled by zoom so a key press crosses the same fraction of the screen
+      // whether the view is close or far. W is "forward", which is up the screen,
+      // and the adapter reports up as -y.
+      const step = KEYBOARD_PAN_TILES_PER_SEC * delta * (this.rig.zoom / DEFAULT_VIEW_SIZE);
+      this.rig.panGround(pan.x * step, -pan.y * step);
     }
 
     const yaw = this.adapter.keyboardYaw();
