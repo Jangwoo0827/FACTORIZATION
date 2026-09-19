@@ -16,7 +16,15 @@ import {
   TILE_H,
   TILE_W,
 } from '../config';
-import { tileToWorld, worldToTile, type Vec2 } from '../core/iso';
+import {
+  rotateFootprint,
+  rotateTile,
+  tileToWorld,
+  unrotateTile,
+  worldToTile,
+  type Vec2,
+  type ViewRotation,
+} from '../core/iso';
 import { tileLine } from '../core/line';
 import { BUILDING_DEFS, DEF_MAP } from '../data/buildings';
 import { CompositeCommand, History, PlaceCommand, RemoveCommand, type Command } from '../input/commands';
@@ -68,6 +76,11 @@ export class GameScene extends Phaser.Scene {
   private rotation: Rotation = 0;
   private hoverTile: Vec2 | null = null;
 
+  /** Which way the map is turned on screen. Tiles stay in world space everywhere else. */
+  private viewRotation: ViewRotation = 0;
+  /** Static ground sprites, kept so they can be repositioned when the view turns. */
+  private tileSprites: { x: number; y: number; image: Phaser.GameObjects.Image }[] = [];
+
   /** Commands applied during the current drag, promoted to one history entry on release. */
   private stroke: Command[] = [];
   /** Tiles already visited this stroke, so a wobbling finger does not retry them. */
@@ -100,6 +113,7 @@ export class GameScene extends Phaser.Scene {
       onSelectBuilding: (id) => this.selectBuilding(id),
       onSelectErase: () => this.toggleErase(),
       onRotate: () => this.rotate(),
+      onRotateView: (delta) => this.rotateView(delta),
       onUndo: () => this.undo(),
       onRedo: () => this.redo(),
     });
@@ -118,8 +132,9 @@ export class GameScene extends Phaser.Scene {
         onSecondaryDrag: (screen) => this.continueErase(screen),
         onSecondaryEnd: (cancelled) => this.endStroke(cancelled),
         onTap: (screen) => this.inspect(this.tileAt(screen)),
-        onLongPress: (screen) => this.eyedropper(this.tileAt(screen)),
+        onPick: (screen) => this.eyedropper(this.tileAt(screen)),
         onRotate: () => this.rotate(),
+        onRotateView: (delta) => this.rotateView(delta),
         onUndo: () => this.undo(),
         onRedo: () => this.redo(),
         onCancel: () => this.clearTool(),
@@ -133,8 +148,8 @@ export class GameScene extends Phaser.Scene {
 
     this.hud.setHint(
       this.adapter.pointerType === 'touch'
-        ? '건물을 고르고 화면을 드래그해 지으세요. 두 손가락으로 이동/확대.'
-        : '건물을 고르고 드래그해 지으세요. 우클릭 철거, 휠 확대, R 회전.',
+        ? '건물을 고르고 화면을 드래그해 지으세요. 두 손가락으로 이동/확대, ◀▶로 시점 회전.'
+        : '건물을 고르고 드래그해 지으세요. 우클릭 철거, 휠 확대, R 건물 회전, Q/E 시점 회전.',
     );
     this.refreshHud();
   }
@@ -244,10 +259,50 @@ export class GameScene extends Phaser.Scene {
         else if (ore !== Ore.None) key = `tile-ore-${ore}`;
         if (!key) continue;
 
-        const pos = tileToWorld(x, y);
-        this.add.image(pos.x, pos.y, key).setDepth(DEPTH.tiles);
+        const pos = this.projectTile(x, y);
+        const image = this.add.image(pos.x, pos.y, key).setDepth(DEPTH.tiles);
+        this.tileSprites.push({ x, y, image });
       }
     }
+  }
+
+  /** World tile -> screen-space world point, through the current view rotation. */
+  private projectTile(x: number, y: number): Vec2 {
+    const r = rotateTile(x, y, this.viewRotation, this.world.size);
+    return tileToWorld(r.x, r.y);
+  }
+
+  /** World footprint -> the view-space rectangle it occupies. */
+  private viewRect(
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+  ): { x: number; y: number; w: number; h: number } {
+    return rotateFootprint(x, y, w, h, this.viewRotation, this.world.size);
+  }
+
+  /**
+   * Turns the view a quarter turn, keeping whatever tile was centred on screen
+   * centred afterwards — without that the map appears to leap sideways.
+   */
+  private rotateView(delta: -1 | 1): void {
+    const camera = this.cameras.main;
+    const focus = this.tileAt({ x: camera.width / 2, y: camera.height / 2 });
+
+    this.viewRotation = (((this.viewRotation + delta) % 4) + 4) % 4 as ViewRotation;
+
+    for (const sprite of this.tileSprites) {
+      const pos = this.projectTile(sprite.x, sprite.y);
+      sprite.image.setPosition(pos.x, pos.y);
+    }
+
+    const centre = this.projectTile(focus.x, focus.y);
+    camera.centerOn(centre.x, centre.y);
+
+    this.buildingsDirty = true;
+    this.gridDirty = true;
+    this.refreshHud();
   }
 
   // ---------------------------------------------------------------- tools
@@ -442,13 +497,16 @@ export class GameScene extends Phaser.Scene {
     if (!hover || !this.toolActive()) return;
 
     // A halo, not a full-map grid: bounded cost and less visual noise.
+    // Iterated in view space — rotation maps the square map onto itself, so the
+    // bounds check is the same either way.
     this.gridGfx.lineStyle(1, GRID_COLOR, 0.22);
+    const centre = rotateTile(hover.x, hover.y, this.viewRotation, this.world.size);
     const r = GRID_HALO_RADIUS;
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
         if (dx * dx + dy * dy > r * r) continue;
-        const x = hover.x + dx;
-        const y = hover.y + dy;
+        const x = centre.x + dx;
+        const y = centre.y + dy;
         if (!this.world.inBounds(x, y)) continue;
         this.strokeDiamond(this.gridGfx, x, y, 1, 1);
       }
@@ -463,8 +521,9 @@ export class GameScene extends Phaser.Scene {
     if (this.eraseMode) {
       const building = this.world.buildingAt(hover.x, hover.y);
       const target = building ? this.footprintOf(building) : { x: hover.x, y: hover.y, w: 1, h: 1 };
+      const rect = this.viewRect(target.x, target.y, target.w, target.h);
       this.ghostGfx.fillStyle(0xd94a4a, 0.35);
-      this.fillDiamond(this.ghostGfx, target.x, target.y, target.w, target.h);
+      this.fillDiamond(this.ghostGfx, rect.x, rect.y, rect.w, rect.h);
       return;
     }
 
@@ -477,19 +536,28 @@ export class GameScene extends Phaser.Scene {
     const { w, h } = rotatedSize(def, this.rotation);
     const valid = this.world.checkPlacement(defId, origin.x, origin.y, this.rotation).ok;
     const tint = valid ? def.color : 0xd94a4a;
+    const rect = this.viewRect(origin.x, origin.y, w, h);
 
-    this.drawIsoBox(this.ghostGfx, origin.x, origin.y, w, h, tint, def.lift, 0.55);
+    this.drawIsoBox(this.ghostGfx, rect.x, rect.y, rect.w, rect.h, tint, def.lift, 0.55);
   }
 
   private redrawBuildings(): void {
     this.buildingGfx.clear();
-    // Painter's algorithm on x + y (GDD 4.1).
-    const sorted = [...this.world.buildings()].sort((a, b) => a.x + a.y - (b.x + b.y));
-    for (const building of sorted) {
+
+    // Painter's algorithm on x + y (GDD 4.1) — but in VIEW space. World-space
+    // depth only describes back-to-front from one angle, so sorting on it would
+    // draw buildings through each other at three of the four rotations.
+    const drawable = [];
+    for (const building of this.world.buildings()) {
       const def = DEF_MAP.get(building.defId);
       if (!def) continue;
       const { w, h } = rotatedSize(def, building.rot);
-      this.drawIsoBox(this.buildingGfx, building.x, building.y, w, h, def.color, def.lift, 1);
+      drawable.push({ def, rect: this.viewRect(building.x, building.y, w, h) });
+    }
+    drawable.sort((a, b) => a.rect.x + a.rect.y - (b.rect.x + b.rect.y));
+
+    for (const { def, rect } of drawable) {
+      this.drawIsoBox(this.buildingGfx, rect.x, rect.y, rect.w, rect.h, def.color, def.lift, 1);
     }
   }
 
@@ -577,9 +645,11 @@ export class GameScene extends Phaser.Scene {
 
   // ---------------------------------------------------------------- helpers
 
+  /** Screen point -> world tile, undoing the view rotation that put it there. */
   private tileAt(screen: Vec2): Vec2 {
     const world = this.view.screenToWorld(screen);
-    return worldToTile(world.x, world.y);
+    const viewTile = worldToTile(world.x, world.y);
+    return unrotateTile(viewTile.x, viewTile.y, this.viewRotation, this.world.size);
   }
 
   private tileKey(x: number, y: number): number {
@@ -606,6 +676,7 @@ export class GameScene extends Phaser.Scene {
     this.hud.setStatus({
       tile,
       rotation: this.rotation,
+      viewRotation: this.viewRotation,
       buildings: this.world.buildingCount,
       zoom: this.view ? this.view.zoom : 1,
       detail: tile ? this.describeTile(tile) : '—',

@@ -56,6 +56,65 @@ export function tileDepth(tx: number, ty: number): number {
   return tx + ty;
 }
 
+/** Which map corner is currently drawn at the top of the screen. */
+export type ViewRotation = 0 | 1 | 2 | 3;
+
+/**
+ * Turns the view by 90 degrees a time.
+ *
+ * The camera itself never rotates — rotating a 2:1 diamond by 90 degrees would
+ * squash it into a 1:2 one and break the projection. Instead the tile grid is
+ * remapped before projection, so diamonds keep their shape and only the map's
+ * orientation changes.
+ *
+ * Depth ordering must use the ROTATED coordinates: `x + y` only describes
+ * back-to-front from one viewing angle.
+ */
+export function rotateTile(x: number, y: number, rot: ViewRotation, size: number): Vec2 {
+  const max = size - 1;
+  switch (rot) {
+    case 1:
+      return { x: max - y, y: x };
+    case 2:
+      return { x: max - x, y: max - y };
+    case 3:
+      return { x: y, y: max - x };
+    default:
+      return { x, y };
+  }
+}
+
+/** Inverse of `rotateTile`: takes a picked view-space tile back to world space. */
+export function unrotateTile(x: number, y: number, rot: ViewRotation, size: number): Vec2 {
+  return rotateTile(x, y, ((4 - rot) % 4) as ViewRotation, size);
+}
+
+/**
+ * View-space bounding rectangle of a world-space footprint.
+ *
+ * A rotated rectangle is still a rectangle, so rotating two opposite corners and
+ * taking the extremes is enough — and it handles the axis swap on odd turns.
+ */
+export function rotateFootprint(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  rot: ViewRotation,
+  size: number,
+): { x: number; y: number; w: number; h: number } {
+  const a = rotateTile(x, y, rot, size);
+  const b = rotateTile(x + w - 1, y + h - 1, rot, size);
+  const minX = Math.min(a.x, b.x);
+  const minY = Math.min(a.y, b.y);
+  return {
+    x: minX,
+    y: minY,
+    w: Math.abs(b.x - a.x) + 1,
+    h: Math.abs(b.y - a.y) + 1,
+  };
+}
+
 /**
  * Tile range covering an axis-aligned world-space rectangle. The four screen
  * corners map to the four extremes in tile space, so min/max over them bounds the

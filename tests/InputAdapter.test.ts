@@ -29,8 +29,9 @@ function makeHandlers(): MockedHandlers {
     onSecondaryDrag: vi.fn<InputHandlers['onSecondaryDrag']>(),
     onSecondaryEnd: vi.fn<InputHandlers['onSecondaryEnd']>(),
     onTap: vi.fn<InputHandlers['onTap']>(),
-    onLongPress: vi.fn<InputHandlers['onLongPress']>(),
+    onPick: vi.fn<InputHandlers['onPick']>(),
     onRotate: vi.fn<InputHandlers['onRotate']>(),
+    onRotateView: vi.fn<InputHandlers['onRotateView']>(),
     onUndo: vi.fn<InputHandlers['onUndo']>(),
     onRedo: vi.fn<InputHandlers['onRedo']>(),
     onCancel: vi.fn<InputHandlers['onCancel']>(),
@@ -153,7 +154,7 @@ describe('InputAdapter gestures', () => {
     it('fires the eyedropper on a long press, and suppresses the tap', () => {
       pointer(element, 'pointerdown', { id: 1, x: 100, y: 100 });
       vi.advanceTimersByTime(500);
-      expect(handlers.onLongPress).toHaveBeenCalledWith({ x: 100, y: 100 });
+      expect(handlers.onPick).toHaveBeenCalledWith({ x: 100, y: 100 });
 
       pointer(element, 'pointerup', { id: 1, x: 100, y: 100 });
       expect(handlers.onTap).not.toHaveBeenCalled();
@@ -164,7 +165,7 @@ describe('InputAdapter gestures', () => {
       pointer(element, 'pointermove', { id: 1, x: 140, y: 100 });
       vi.advanceTimersByTime(500);
 
-      expect(handlers.onLongPress).not.toHaveBeenCalled();
+      expect(handlers.onPick).not.toHaveBeenCalled();
     });
   });
 
@@ -188,6 +189,22 @@ describe('InputAdapter gestures', () => {
       expect(handlers.onPrimaryStart).not.toHaveBeenCalled();
     });
 
+    it('picks on a middle click that did not drag', () => {
+      pointer(element, 'pointerdown', { id: 1, x: 40, y: 50, touch: false, button: 1 });
+      pointer(element, 'pointerup', { id: 1, x: 41, y: 50, touch: false, button: 1 });
+
+      expect(handlers.onPick).toHaveBeenCalledWith({ x: 41, y: 50 });
+      expect(handlers.onTap).not.toHaveBeenCalled();
+    });
+
+    it('does not pick when the middle button was used to pan', () => {
+      pointer(element, 'pointerdown', { id: 1, x: 40, y: 50, touch: false, button: 1 });
+      pointer(element, 'pointermove', { id: 1, x: 120, y: 50, touch: false });
+      pointer(element, 'pointerup', { id: 1, x: 120, y: 50, touch: false, button: 1 });
+
+      expect(handlers.onPick).not.toHaveBeenCalled();
+    });
+
     it('reports hover only when no button is down', () => {
       pointer(element, 'pointermove', { id: 1, x: 50, y: 60, touch: false });
       expect(handlers.onHover).toHaveBeenCalledWith({ x: 50, y: 60 });
@@ -203,6 +220,19 @@ describe('InputAdapter gestures', () => {
         new KeyboardEvent('keydown', { code: 'KeyZ', ctrlKey: true, shiftKey: true }),
       );
       expect(handlers.onRedo).toHaveBeenCalledTimes(1);
+    });
+
+    it('turns the view with Q and E, and the building with R', () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyQ' }));
+      expect(handlers.onRotateView).toHaveBeenCalledWith(-1);
+
+      window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyE' }));
+      expect(handlers.onRotateView).toHaveBeenCalledWith(1);
+
+      // R must stay on the building, not the camera.
+      window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyR' }));
+      expect(handlers.onRotate).toHaveBeenCalledTimes(1);
+      expect(handlers.onRotateView).toHaveBeenCalledTimes(2);
     });
 
     it('produces a normalised pan vector from held keys', () => {

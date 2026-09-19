@@ -33,9 +33,12 @@ export interface InputHandlers {
   onSecondaryEnd(cancelled: boolean): void;
   /** Press and release without dragging, while no tool is held: inspect. */
   onTap(screen: Vec2): void;
-  /** Touch long press: eyedropper. */
-  onLongPress(screen: Vec2): void;
+  /** Eyedropper — middle click on desktop, long press on touch. */
+  onPick(screen: Vec2): void;
+  /** Rotate the building being placed. */
   onRotate(): void;
+  /** Turn the camera a quarter turn: -1 anticlockwise, +1 clockwise. */
+  onRotateView(delta: -1 | 1): void;
   onUndo(): void;
   onRedo(): void;
   /** Escape / right-click with no tool: clear the current selection. */
@@ -49,9 +52,12 @@ export interface InputAdapterOptions {
   isToolActive(): boolean;
 }
 
+/** What a press that never turned into a drag should do on release. */
+type TapAction = 'none' | 'inspect' | 'pick';
+
 type Gesture =
   | { kind: 'none' }
-  | { kind: 'pan'; id: number; start: Vec2; last: Vec2; moved: boolean; canTap: boolean }
+  | { kind: 'pan'; id: number; start: Vec2; last: Vec2; moved: boolean; tap: TapAction }
   | { kind: 'primary'; id: number; start: Vec2 }
   | { kind: 'secondary'; id: number; start: Vec2 }
   | { kind: 'pinch'; idA: number; idB: number; lastDist: number; lastMid: Vec2 };
@@ -186,7 +192,9 @@ export class InputAdapter {
       return;
     }
     if (e.button === 1) {
-      this.gesture = { kind: 'pan', id: e.pointerId, start: point, last: point, moved: false, canTap: false };
+      // Middle drag pans; middle click picks, the way block games bind it. This
+      // keeps the eyedropper off a letter key now that Q and E turn the camera.
+      this.gesture = { kind: 'pan', id: e.pointerId, start: point, last: point, moved: false, tap: 'pick' };
       return;
     }
     if (e.button !== 0) return;
@@ -195,7 +203,7 @@ export class InputAdapter {
       this.gesture = { kind: 'primary', id: e.pointerId, start: point };
       this.handlers.onPrimaryStart(point);
     } else {
-      this.gesture = { kind: 'pan', id: e.pointerId, start: point, last: point, moved: false, canTap: true };
+      this.gesture = { kind: 'pan', id: e.pointerId, start: point, last: point, moved: false, tap: 'inspect' };
     }
   }
 
@@ -207,7 +215,7 @@ export class InputAdapter {
       // No long press while a tool is held: it would fight with starting a drag.
       return;
     }
-    this.gesture = { kind: 'pan', id, start: point, last: point, moved: false, canTap: true };
+    this.gesture = { kind: 'pan', id, start: point, last: point, moved: false, tap: 'inspect' };
     this.startLongPress(point);
   }
 
@@ -304,7 +312,10 @@ export class InputAdapter {
         return;
       case 'pan':
         if (e.pointerId !== g.id) return;
-        if (g.canTap && !g.moved) this.handlers.onTap(point);
+        if (!g.moved) {
+          if (g.tap === 'inspect') this.handlers.onTap(point);
+          else if (g.tap === 'pick') this.handlers.onPick(point);
+        }
         this.gesture = { kind: 'none' };
         return;
       case 'primary':
@@ -372,10 +383,12 @@ export class InputAdapter {
         this.handlers.onRotate();
         return;
       case 'KeyQ':
-        if (this.lastHover) {
-          e.preventDefault();
-          this.handlers.onLongPress(this.lastHover);
-        }
+        e.preventDefault();
+        this.handlers.onRotateView(-1);
+        return;
+      case 'KeyE':
+        e.preventDefault();
+        this.handlers.onRotateView(1);
         return;
       case 'Escape':
         e.preventDefault();
@@ -412,8 +425,8 @@ export class InputAdapter {
       this.longPressTimer = null;
       this.longPressOrigin = null;
       // Swallow the release so the long press does not also register as a tap.
-      if (this.gesture.kind === 'pan') this.gesture.canTap = false;
-      this.handlers.onLongPress(point);
+      if (this.gesture.kind === 'pan') this.gesture.tap = 'none';
+      this.handlers.onPick(point);
     }, LONG_PRESS_MS);
   }
 

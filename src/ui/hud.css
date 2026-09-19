@@ -110,8 +110,12 @@ body {
 .hud__controls {
   display: flex;
   gap: 8px;
-  /* These are the only path to rotate/undo on touch — never let them shrink away. */
-  flex: 0 0 auto;
+  /* These are the only path to rotate/undo/view on touch, so they may wrap onto a
+     second row on a narrow screen but must never be squeezed out of reach. */
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: var(--touch);
 }
 
 .icon-button {
@@ -246,7 +250,8 @@ body {
 @media (max-width: 560px) {
   .hud__info {
     font-size: 12px;
-    max-width: 65vw;
+    /* Yields room to the control cluster, which has no alternative on touch. */
+    max-width: 45vw;
   }
 
   .tool__size {

@@ -7,13 +7,14 @@
  * so touch has a path to actions that otherwise live on keys.
  */
 
-import type { Vec2 } from '../core/iso';
+import type { Vec2, ViewRotation } from '../core/iso';
 import type { BuildingDef, Rotation } from '../sim/types';
 
 export interface HudCallbacks {
   onSelectBuilding(defId: string | null): void;
   onSelectErase(): void;
   onRotate(): void;
+  onRotateView(delta: -1 | 1): void;
   onUndo(): void;
   onRedo(): void;
 }
@@ -21,6 +22,7 @@ export interface HudCallbacks {
 export interface HudStatus {
   tile: Vec2 | null;
   rotation: Rotation;
+  viewRotation: ViewRotation;
   buildings: number;
   zoom: number;
   detail: string;
@@ -28,6 +30,8 @@ export interface HudStatus {
 }
 
 const ROTATION_LABEL = ['N', 'E', 'S', 'W'] as const;
+/** Which map corner the view is looking from. */
+const VIEW_LABEL = ['북', '동', '남', '서'] as const;
 
 export class Hud {
   private readonly buttons = new Map<string, HTMLButtonElement>();
@@ -73,6 +77,7 @@ export class Hud {
     const tile = status.tile ? `${status.tile.x}, ${status.tile.y}` : '—';
     this.statusEl.textContent =
       `타일 ${tile} · 방향 ${ROTATION_LABEL[status.rotation]} · ` +
+      `시점 ${VIEW_LABEL[status.viewRotation]} · ` +
       `건물 ${status.buildings} · 줌 ${status.zoom.toFixed(2)}x`;
     this.detailEl.textContent = status.detail;
     this.problemEl.textContent = status.problem ?? '';
@@ -123,6 +128,12 @@ export class Hud {
     switch (target.dataset['action']) {
       case 'rotate':
         this.callbacks.onRotate();
+        return;
+      case 'view-left':
+        this.callbacks.onRotateView(-1);
+        return;
+      case 'view-right':
+        this.callbacks.onRotateView(1);
         return;
       case 'undo':
         this.callbacks.onUndo();
