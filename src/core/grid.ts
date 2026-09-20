@@ -38,3 +38,20 @@ export function worldToTile(wx: number, wz: number): Vec2 {
 export function footprintCenter(tx: number, ty: number, w: number, h: number): Vec3 {
   return { x: tx + w / 2, y: 0, z: ty + h / 2 };
 }
+
+/**
+ * Where a w x h footprint should sit so that its centre is as close as it can get
+ * to a ground point (`gx`, `gz`), returned as the footprint's minimum-corner tile.
+ *
+ * A footprint's centre can only land on a tile centre when a side is odd, or on a
+ * tile corner when it is even. Rounding `g - size/2` picks the nearest of those,
+ * which is what makes a 2x2 building sit on the corner nearest the cursor instead
+ * of hanging half a tile off it (the old rule took the cursor's tile as the corner,
+ * which was always half a tile toward +x,+z).
+ *
+ * For a 1x1 this reduces to `floor`, so single tiles behave exactly as before.
+ */
+export function footprintOrigin(gx: number, gz: number, w: number, h: number): Vec2 {
+  // `+ 0` normalises -0 to +0, so an origin can be used as a string key safely.
+  return { x: Math.round(gx - w / 2) + 0, y: Math.round(gz - h / 2) + 0 };
+}

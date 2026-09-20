@@ -3,7 +3,7 @@
  * over what a click would remove.
  */
 
-import { BoxGeometry, Color, DoubleSide, Mesh, MeshBasicMaterial, Scene } from 'three';
+import { BoxGeometry, Color, DoubleSide, Mesh, MeshBasicMaterial, PlaneGeometry, Scene } from 'three';
 import { footprintCenter } from '../core/grid';
 import { arrowRotation, createArrowGeometry } from './arrow';
 
@@ -14,6 +14,13 @@ const ERASE_COLOR = 0xe4635c;
 export class GhostView {
   private readonly mesh: Mesh<BoxGeometry, MeshBasicMaterial>;
   private readonly arrow: Mesh<ReturnType<typeof createArrowGeometry>, MeshBasicMaterial>;
+  /**
+   * The tiles the building would occupy, flat on the ground.
+   *
+   * A tall preview rises up the screen from its base, so the tile it actually sits
+   * on is easy to misjudge; the base is what is picked, and this makes it readable.
+   */
+  private readonly footprint: Mesh<PlaneGeometry, MeshBasicMaterial>;
   private readonly colour = new Color();
 
   constructor(scene: Scene) {
@@ -26,6 +33,16 @@ export class GhostView {
     this.mesh.visible = false;
     this.mesh.renderOrder = 10;
     scene.add(this.mesh);
+
+    const plate = new PlaneGeometry(1, 1);
+    plate.rotateX(-Math.PI / 2);
+    this.footprint = new Mesh(
+      plate,
+      new MeshBasicMaterial({ transparent: true, opacity: 0.6, depthWrite: false }),
+    );
+    this.footprint.visible = false;
+    this.footprint.renderOrder = 9;
+    scene.add(this.footprint);
 
     // Drawn on top of everything so the direction stays readable even when the
     // preview sits partly inside a building or another belt.
@@ -46,7 +63,19 @@ export class GhostView {
 
   hide(): void {
     this.mesh.visible = false;
+    this.footprint.visible = false;
     this.arrow.visible = false;
+  }
+
+  /** Where the preview currently is, for tests and the debug hook. Null when hidden. */
+  describe(): { x: number; z: number; w: number; h: number } | null {
+    if (!this.mesh.visible) return null;
+    return {
+      x: this.mesh.position.x,
+      z: this.mesh.position.z,
+      w: this.mesh.scale.x,
+      h: this.mesh.scale.z,
+    };
   }
 
   /**
@@ -93,5 +122,10 @@ export class GhostView {
     this.mesh.position.set(centre.x, 0.02, centre.z);
     this.mesh.scale.set(w, height, h);
     this.mesh.visible = true;
+
+    this.footprint.position.set(centre.x, 0.03, centre.z);
+    this.footprint.scale.set(w, 1, h);
+    this.footprint.material.color.copy(this.mesh.material.color);
+    this.footprint.visible = true;
   }
 }

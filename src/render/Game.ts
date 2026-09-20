@@ -26,7 +26,7 @@ import {
   YAW_STEP,
 } from '../config';
 import { dirFromStep } from '../core/dir';
-import { worldToTile, type Vec2 } from '../core/grid';
+import { footprintOrigin, worldToTile, type Vec2 } from '../core/grid';
 import { tileLine, walkGrid } from '../core/line';
 import { BUILDABLE_DEFS, DEF_MAP } from '../data/buildings';
 import { CompositeCommand, History, PlaceCommand, RemoveCommand, type Command } from '../input/commands';
@@ -50,6 +50,7 @@ import { Hud, type StockRow } from '../ui/Hud';
 import { CameraRig } from './CameraRig';
 import { GhostView } from './GhostView';
 import { ItemView } from './ItemView';
+import { fitRenderer } from './viewport';
 import { WorldView } from './WorldView';
 
 const BACKGROUND = 0x11161b;
@@ -77,7 +78,12 @@ export class Game {
   private selectedDefId: string | null = null;
   private eraseMode = false;
   private rotation: Rotation = 0;
+  /** Tile under the cursor: what erase, inspect and the HUD talk about. */
   private hoverTile: Vec2 | null = null;
+  /** Exact ground point under the cursor. Placement is centred on this, not on the tile. */
+  private hoverPoint: Vec2 | null = null;
+  /** Where the current preview footprint starts, to skip redraws that would change nothing. */
+  private hoverOrigin: Vec2 | null = null;
 
   private stroke: Command[] = [];
   private strokeTiles = new Set<number>();
@@ -102,7 +108,6 @@ export class Game {
 
   constructor(private readonly container: HTMLElement) {
     this.renderer = new WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.container.appendChild(this.renderer.domElement);
 
     this.scene.background = new Color(BACKGROUND);
@@ -156,7 +161,7 @@ export class Game {
           this.rig.zoomAt(factor, focus);
           this.refreshHud();
         },
-        onHover: (screen) => this.setHover(screen ? this.tileAt(screen) : null),
+        onHover: (screen) => this.setHover(screen ? this.groundPointAt(screen) : null),
         onPrimaryStart: (screen) => this.startStroke(screen, this.eraseMode),
         onPrimaryDrag: (screen) => this.extendStroke(screen, this.eraseMode),
         onPrimaryEnd: (cancelled) => this.endStroke(cancelled),
@@ -219,6 +224,13 @@ export class Game {
       delivered: (item: number): number => this.sim.sieve.delivered[item]!,
       itemsOnBelts: (): number => this.sim.belts.totalItems(),
       itemsDrawn: (): number => this.itemView.drawn,
+      /** The placement preview: its centre and footprint in world units, or null. */
+      ghost: () => this.ghost.describe(),
+      /** Exact ground point under a screen position, as the game itself computes it. */
+      groundAt: (x: number, y: number): { x: number; z: number } | null => {
+        const p = this.groundPointAt({ x, y });
+        return p.x < 0 ? null : { x: p.x, z: p.y };
+      },
       /** Instanced layers in the scene: what each is, how many it draws, and its bounds. */
       layers: (): { type: string; count: number; vertices: number; y: number }[] =>
         this.scene.children
@@ -361,7 +373,7 @@ export class Game {
   private onResize = (): void => {
     const width = this.container.clientWidth;
     const height = this.container.clientHeight;
-    this.renderer.setSize(width, height, false);
+    fitRenderer(this.renderer, width, height, window.devicePixelRatio);
     this.rig.setViewport(width, height);
   };
 
@@ -426,7 +438,7 @@ export class Game {
   }
 
   private inspect(tile: Vec2): void {
-    this.setHover(tile);
+    this.setHover({ x: tile.x + 0.5, y: tile.y + 0.5 });
     this.hud.setHint(this.describeTile(tile));
   }
 
@@ -436,27 +448,32 @@ export class Game {
     this.stroke = [];
     this.strokeTiles.clear();
     this.strokeBelts.clear();
-    const tile = this.tileAt(screen);
+    const point = this.groundPointAt(screen);
+    const tile = worldToTile(point.x, point.y);
     this.lastStrokeTile = tile;
     if (erasing) this.applyErase(tile);
-    else this.applyPlace(tile);
+    else this.applyPlace(tile, point);
   }
 
   /** Fills the tiles between pointer samples so a fast drag lays an unbroken run. */
   private extendStroke(screen: Vec2, erasing: boolean): void {
-    const tile = this.tileAt(screen);
-    this.setHover(tile);
+    const point = this.groundPointAt(screen);
+    const tile = worldToTile(point.x, point.y);
+    this.setHover(point);
 
     const from = this.lastStrokeTile;
     if (!from) {
       if (erasing) this.applyErase(tile);
-      else this.applyPlace(tile);
+      else this.applyPlace(tile, point);
     } else if (erasing) {
       for (const step of tileLine(from.x, from.y, tile.x, tile.y)) this.applyErase(step);
     } else if (this.beltToolActive()) {
       this.extendBelts(from, tile);
     } else {
-      for (const step of tileLine(from.x, from.y, tile.x, tile.y)) this.applyPlace(step);
+      // Tiles the pointer skipped over have no exact point of their own; the last
+      // one is where the cursor actually is, so it gets the real position.
+      const steps = tileLine(from.x, from.y, tile.x, tile.y);
+      steps.forEach((step, i) => this.applyPlace(step, i === steps.length - 1 ? point : undefined));
     }
     this.lastStrokeTile = tile;
   }
@@ -529,13 +546,18 @@ export class Game {
     this.refreshHud();
   }
 
-  private applyPlace(tile: Vec2): void {
+  /**
+   * `point` is the exact ground position when there is one. Without it the tile's
+   * centre stands in, which for a footprint of one tile is identical and for larger
+   * ones lands where the old tile-based rule did.
+   */
+  private applyPlace(tile: Vec2, point?: Vec2): void {
     const defId = this.selectedDefId;
     if (!defId) return;
     const def = DEF_MAP.get(defId);
     if (!def) return;
 
-    const origin = this.originFor(def, tile);
+    const origin = this.originFor(def, point ?? { x: tile.x + 0.5, y: tile.y + 0.5 });
     const key = this.tileKey(origin.x, origin.y);
     if (this.strokeTiles.has(key)) return;
     this.strokeTiles.add(key);
@@ -582,16 +604,39 @@ export class Game {
 
   // ---------------------------------------------------------------- view
 
-  private setHover(tile: Vec2 | null): void {
-    if (tile && !this.world.inBounds(tile.x, tile.y)) tile = null;
-    if (tile && this.hoverTile && tile.x === this.hoverTile.x && tile.y === this.hoverTile.y) return;
-    if (!tile && !this.hoverTile) return;
+  private setHover(point: Vec2 | null): void {
+    let tile = point ? worldToTile(point.x, point.y) : null;
+    if (tile && !this.world.inBounds(tile.x, tile.y)) {
+      tile = null;
+      point = null;
+    }
+    this.hoverPoint = point;
+
+    // A mouse move that changes neither the tile nor where the footprint would
+    // start changes nothing on screen; skip the redraw and the DOM writes.
+    const def = this.selectedDefId ? DEF_MAP.get(this.selectedDefId) : undefined;
+    const origin = point && def ? this.originFor(def, point) : null;
+    const sameTile =
+      tile && this.hoverTile
+        ? tile.x === this.hoverTile.x && tile.y === this.hoverTile.y
+        : tile === this.hoverTile;
+    const sameOrigin =
+      origin && this.hoverOrigin
+        ? origin.x === this.hoverOrigin.x && origin.y === this.hoverOrigin.y
+        : origin === this.hoverOrigin;
+    if (sameTile && sameOrigin) return;
+
     this.hoverTile = tile;
     this.refreshGhost();
     this.refreshHud();
   }
 
   private refreshGhost(): void {
+    // Recorded here, where the preview is actually drawn, rather than only when the
+    // mouse moves. Rotating or switching tools redraws it without a mouse move, and
+    // a stale record would make the next move look like "nothing changed".
+    this.hoverOrigin = null;
+
     const hover = this.hoverTile;
     if (!hover) {
       this.ghost.hide();
@@ -623,7 +668,8 @@ export class Game {
       return;
     }
 
-    const origin = this.originFor(def, hover);
+    const origin = this.originFor(def, this.hoverPoint ?? { x: hover.x + 0.5, y: hover.y + 0.5 });
+    this.hoverOrigin = origin;
     const { w, h } = rotatedSize(def, this.rotation);
     const valid = this.world.checkPlacement(defId, origin.x, origin.y, this.rotation).ok;
     this.ghost.showBuilding(
@@ -638,13 +684,16 @@ export class Game {
     );
   }
 
-  /** Larger footprints centre on the pointer rather than hanging off it. */
-  private originFor(def: BuildingDef, tile: Vec2): Vec2 {
+  /**
+   * Footprint start for a building whose centre should sit under `point`.
+   *
+   * Works from the exact ground point, not the tile it is in, so an even-sized
+   * building settles on the tile corner nearest the cursor instead of using the
+   * cursor's tile as its corner, which left it half a tile off in both axes.
+   */
+  private originFor(def: BuildingDef, point: Vec2): Vec2 {
     const { w, h } = rotatedSize(def, this.rotation);
-    return {
-      x: tile.x - Math.floor((w - 1) / 2),
-      y: tile.y - Math.floor((h - 1) / 2),
-    };
+    return footprintOrigin(point.x, point.y, w, h);
   }
 
   private footprintOf(building: PlacedBuilding): { x: number; y: number; w: number; h: number } {
@@ -654,11 +703,20 @@ export class Game {
     return { x: building.x, y: building.y, w, h };
   }
 
-  /** Screen point -> tile, by raycasting the ground plane. */
-  private tileAt(screen: Vec2): Vec2 {
+  /**
+   * Screen point -> exact ground position, by raycasting the ground plane.
+   * `y` holds world Z, matching how tile coordinates are named everywhere else.
+   */
+  private groundPointAt(screen: Vec2): Vec2 {
     const ground = this.rig.groundAt(screen);
     if (!ground) return { x: -1, y: -1 };
-    return worldToTile(ground.x, ground.z);
+    return { x: ground.x, y: ground.z };
+  }
+
+  /** Screen point -> the tile under it. */
+  private tileAt(screen: Vec2): Vec2 {
+    const point = this.groundPointAt(screen);
+    return worldToTile(point.x, point.y);
   }
 
   private tileKey(x: number, y: number): number {
@@ -723,7 +781,7 @@ export class Game {
     if (!tile || !defId || this.eraseMode) return null;
     const def = DEF_MAP.get(defId);
     if (!def) return null;
-    const origin = this.originFor(def, tile);
+    const origin = this.originFor(def, this.hoverPoint ?? { x: tile.x + 0.5, y: tile.y + 0.5 });
     const result = this.world.checkPlacement(defId, origin.x, origin.y, this.rotation);
     return result.ok ? null : PLACEMENT_MESSAGE[result.reason];
   }

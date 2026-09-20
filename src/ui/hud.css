@@ -41,6 +41,10 @@ body {
 #game canvas {
   display: block;
   touch-action: none;
+  /* Belt and braces with fitRenderer: the canvas must always fill its container,
+     never be sized by its backing store, or the picture and the mouse disagree. */
+  width: 100%;
+  height: 100%;
 }
 
 #hud {
