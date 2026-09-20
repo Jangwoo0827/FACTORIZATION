@@ -19,6 +19,15 @@ export interface HudCallbacks {
   onRedo(): void;
 }
 
+export interface StockRow {
+  name: string;
+  /** The raw material's prime (GDD 5.1). */
+  prime: number;
+  color: number;
+  stock: number;
+  perMinute: number;
+}
+
 export interface HudStatus {
   tile: Vec2 | null;
   rotation: Rotation;
@@ -31,7 +40,8 @@ export interface HudStatus {
   problem: string | null;
 }
 
-const ROTATION_LABEL = ['N', 'E', 'S', 'W'] as const;
+/** Grid axes, matching `core/dir.ts`. The arrow on a belt is the readable cue; this is exact. */
+const ROTATION_LABEL = ['+X', '+Z', '-X', '-Z'] as const;
 
 export class Hud {
   private readonly buttons = new Map<string, HTMLButtonElement>();
@@ -41,6 +51,8 @@ export class Hud {
   private readonly hintEl: HTMLElement;
   private readonly buildBar: HTMLElement;
   private readonly controls: HTMLElement;
+  private readonly stockEl: HTMLElement;
+  private readonly perfEl: HTMLElement;
 
   constructor(defs: readonly BuildingDef[], private readonly callbacks: HudCallbacks) {
     this.statusEl = requireElement('hud-status');
@@ -49,6 +61,8 @@ export class Hud {
     this.hintEl = requireElement('hud-hint');
     this.buildBar = requireElement('hud-buildbar');
     this.controls = requireElement('hud-controls');
+    this.stockEl = requireElement('hud-stock');
+    this.perfEl = requireElement('hud-perf');
 
     this.buildBar.replaceChildren();
     for (const def of defs) {
@@ -87,6 +101,62 @@ export class Hud {
 
   setHint(text: string): void {
     this.hintEl.textContent = text;
+  }
+
+  /**
+   * The hub's inventory. Only items that have ever arrived are listed, so the panel
+   * starts nearly empty and grows as new materials reach the hub — each new row is
+   * a new prime turning up (GDD 3).
+   */
+  setStock(rows: readonly StockRow[]): void {
+    this.stockEl.replaceChildren();
+
+    const title = document.createElement('div');
+    title.className = 'stock__title';
+    title.textContent = '시브 재고';
+    this.stockEl.appendChild(title);
+
+    if (rows.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'stock__empty';
+      empty.textContent = '채굴기를 광석 위에 놓고, 컨베이어로 시브까지 이으세요.';
+      this.stockEl.appendChild(empty);
+      return;
+    }
+
+    for (const row of rows) {
+      const line = document.createElement('div');
+      line.className = 'stock__row';
+
+      const swatch = document.createElement('span');
+      swatch.className = 'stock__swatch';
+      swatch.style.background = hex(row.color);
+
+      const name = document.createElement('span');
+      name.className = 'stock__name';
+      name.textContent = row.name;
+
+      const prime = document.createElement('span');
+      prime.className = 'stock__prime';
+      prime.textContent = `소수 ${row.prime}`;
+
+      const count = document.createElement('span');
+      count.className = 'stock__count';
+      count.textContent = row.stock.toLocaleString('ko-KR');
+
+      const rate = document.createElement('span');
+      rate.className = 'stock__rate';
+      rate.textContent = `${Math.round(row.perMinute)}/분`;
+
+      line.append(swatch, name, prime, count, rate);
+      this.stockEl.appendChild(line);
+    }
+  }
+
+  /** Frame and tick timings. Empty text hides the readout. */
+  setPerf(text: string): void {
+    this.perfEl.textContent = text;
+    this.perfEl.classList.toggle('is-visible', text !== '');
   }
 
   private createBuildButton(def: BuildingDef): HTMLButtonElement {

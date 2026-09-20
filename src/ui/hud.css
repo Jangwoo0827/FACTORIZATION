@@ -140,6 +140,101 @@ body {
   transform: translateY(1px);
 }
 
+/* ---------------------------------------------------------------- middle */
+
+.hud__mid {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  /* Only the panels opt back in to the pointer; the gap between them is map. */
+  pointer-events: none;
+}
+
+.hud__stock {
+  min-width: 190px;
+  max-width: min(60vw, 280px);
+  padding: 8px 12px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.stock__title {
+  margin-bottom: 4px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+
+.stock__empty {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+.stock__row {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  grid-template-areas:
+    'swatch name  count'
+    'swatch prime rate';
+  column-gap: 8px;
+  align-items: baseline;
+  padding: 3px 0;
+}
+
+.stock__row + .stock__row {
+  border-top: 1px solid var(--panel-border);
+}
+
+.stock__swatch {
+  grid-area: swatch;
+  align-self: center;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.stock__name {
+  grid-area: name;
+  font-weight: 600;
+}
+
+.stock__prime {
+  grid-area: prime;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.stock__count {
+  grid-area: count;
+  text-align: right;
+  font-weight: 600;
+}
+
+.stock__rate {
+  grid-area: rate;
+  text-align: right;
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.hud__perf {
+  display: none;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+}
+
+.hud__perf.is-visible {
+  display: block;
+}
+
 /* ---------------------------------------------------------------- bottom */
 
 .hud__bottom {

@@ -11,7 +11,9 @@
 
 import {
   BoxGeometry,
+  BufferGeometry,
   Color,
+  DoubleSide,
   GridHelper,
   InstancedMesh,
   Matrix4,
@@ -22,10 +24,10 @@ import {
   Quaternion,
   Scene,
   Vector3,
-  type ColorRepresentation,
 } from 'three';
 import { MAP_SIZE } from '../config';
 import { footprintCenter } from '../core/grid';
+import { arrowRotation, createArrowGeometry } from './arrow';
 import { DEF_MAP } from '../data/buildings';
 import { ORE_INFO, Ore, Terrain, rotatedSize, type BuildingDef } from '../sim/types';
 import type { World } from '../sim/world';
@@ -41,6 +43,17 @@ const TERRAIN_COLOR: Readonly<Record<Terrain, number>> = {
 const DECAL_Y = 0.012;
 const GRID_Y = 0.02;
 
+const ARROW_COLOR = 0xdbe6ee;
+const ARROW_LIFT = 0.006;
+
+interface Placed {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  rot: number;
+}
+
 export class WorldView {
   private readonly buildingLayers = new Map<string, InstancedMesh>();
   private readonly grid: GridHelper;
@@ -50,6 +63,7 @@ export class WorldView {
   private readonly scratchPosition = new Vector3();
   private readonly scratchScale = new Vector3();
   private readonly identityRotation = new Quaternion();
+  private readonly scratchRotation = new Quaternion();
 
   constructor(
     private readonly scene: Scene,
@@ -72,56 +86,97 @@ export class WorldView {
 
   /** Rebuilds every building instance. Cheap enough to run on any world change. */
   refreshBuildings(): void {
-    const grouped = new Map<string, { x: number; y: number; w: number; h: number }[]>();
+    const grouped = new Map<string, Placed[]>();
 
     for (const building of this.world.buildings()) {
       const def = DEF_MAP.get(building.defId);
       if (!def) continue;
       const { w, h } = rotatedSize(def, building.rot);
       const list = grouped.get(def.id) ?? [];
-      list.push({ x: building.x, y: building.y, w, h });
+      list.push({ x: building.x, y: building.y, w, h, rot: building.rot });
       grouped.set(def.id, list);
     }
 
     for (const def of DEF_MAP.values()) {
       const items = grouped.get(def.id) ?? [];
-      const mesh = this.layerFor(def, items.length);
-      if (!mesh) continue;
-
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i]!;
-        const centre = footprintCenter(item.x, item.y, item.w, item.h);
-        this.scratchPosition.set(centre.x, 0, centre.z);
-        this.scratchScale.set(item.w * 0.92, def.height, item.h * 0.92);
-        this.scratchMatrix.compose(
-          this.scratchPosition,
-          this.identityRotation,
-          this.scratchScale,
-        );
-        mesh.setMatrixAt(i, this.scratchMatrix);
-      }
-
-      mesh.count = items.length;
-      mesh.instanceMatrix.needsUpdate = true;
+      this.writeSlabs(def, items);
+      // A belt is a slab plus an arrow on top of it: without the arrow there is no
+      // way to tell which way a line of belts carries anything.
+      if (def.kind === 'belt') this.writeArrows(def, items);
     }
   }
 
-  private layerFor(def: BuildingDef, needed: number): InstancedMesh | null {
-    const existing = this.buildingLayers.get(def.id);
+  private writeSlabs(def: BuildingDef, items: readonly Placed[]): void {
+    const mesh = this.layerFor(`${def.id}:slab`, items.length, () => ({
+      geometry: unitBox(),
+      material: new MeshLambertMaterial({ color: def.color }),
+    }));
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]!;
+      const centre = footprintCenter(item.x, item.y, item.w, item.h);
+      this.scratchPosition.set(centre.x, 0, centre.z);
+      this.scratchScale.set(item.w * 0.92, def.height, item.h * 0.92);
+      this.scratchMatrix.compose(this.scratchPosition, this.identityRotation, this.scratchScale);
+      mesh.setMatrixAt(i, this.scratchMatrix);
+    }
+    mesh.count = items.length;
+    mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  private writeArrows(def: BuildingDef, items: readonly Placed[]): void {
+    const mesh = this.layerFor(`${def.id}:arrow`, items.length, () => ({
+      geometry: sharedArrow(),
+      material: new MeshLambertMaterial({
+        color: ARROW_COLOR,
+        side: DoubleSide,
+        // Lies a hair above the slab's top face; the bias settles the depth test at
+        // shallow camera angles, as it does for the ore decals.
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -2,
+      }),
+    }));
+
+    this.scratchScale.set(1, 1, 1);
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]!;
+      const centre = footprintCenter(item.x, item.y, item.w, item.h);
+      this.scratchPosition.set(centre.x, def.height + ARROW_LIFT, centre.z);
+      arrowRotation(item.rot, this.scratchRotation);
+      this.scratchMatrix.compose(this.scratchPosition, this.scratchRotation, this.scratchScale);
+      mesh.setMatrixAt(i, this.scratchMatrix);
+    }
+    mesh.count = items.length;
+    mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  private layerFor(
+    key: string,
+    needed: number,
+    make: () => { geometry: BufferGeometry; material: MeshLambertMaterial },
+  ): InstancedMesh {
+    const existing = this.buildingLayers.get(key);
     if (existing && existing.instanceMatrix.count >= needed) return existing;
 
     // InstancedMesh capacity is fixed at construction, so grow by replacing.
-    // Doubling keeps this rare as a factory expands.
+    // Doubling keeps this rare as a factory expands. The material is reused so a
+    // resize does not recompile shaders or leak the old one.
+    let parts: { geometry: BufferGeometry; material: MeshLambertMaterial };
     if (existing) {
+      parts = { geometry: existing.geometry, material: existing.material as MeshLambertMaterial };
       this.scene.remove(existing);
       existing.dispose();
+    } else {
+      parts = make();
     }
+
     const capacity = Math.max(64, nextPowerOfTwo(needed));
-    const mesh = new InstancedMesh(unitBox(), buildingMaterial(def.color), capacity);
+    const mesh = new InstancedMesh(parts.geometry, parts.material, capacity);
     mesh.count = 0;
     mesh.frustumCulled = false;
     this.scene.add(mesh);
-    this.buildingLayers.set(def.id, mesh);
+    this.buildingLayers.set(key, mesh);
     return mesh;
   }
 
@@ -203,8 +258,11 @@ function unitBox(): BoxGeometry {
   return sharedBox;
 }
 
-function buildingMaterial(color: ColorRepresentation): MeshLambertMaterial {
-  return new MeshLambertMaterial({ color });
+let arrowGeometry: BufferGeometry | null = null;
+
+function sharedArrow(): BufferGeometry {
+  if (!arrowGeometry) arrowGeometry = createArrowGeometry();
+  return arrowGeometry;
 }
 
 function nextPowerOfTwo(value: number): number {
