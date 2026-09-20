@@ -13,7 +13,7 @@
  */
 
 import { HUB_STOCK_CAP } from '../config';
-import { ITEM_COUNT, type ItemId } from './types';
+import { ITEM_COUNT, type Cost, type ItemId } from './types';
 
 /**
  * Snapshots kept for the per-minute rate. N snapshots span N-1 seconds, so 61 gives
@@ -30,6 +30,44 @@ export class Sieve {
   receive(item: ItemId): void {
     this.delivered[item]!++;
     if (this.stock[item]! < HUB_STOCK_CAP) this.stock[item]!++;
+  }
+
+  /** Whether the stock covers every line of a price. */
+  canAfford(cost: readonly Cost[]): boolean {
+    for (const { item, count } of cost) if (this.stock[item]! < count) return false;
+    return true;
+  }
+
+  /** The first line of a price the stock cannot cover, or null if it is all covered. */
+  shortfall(cost: readonly Cost[]): { item: ItemId; need: number; have: number } | null {
+    for (const { item, count } of cost) {
+      if (this.stock[item]! < count) return { item, need: count, have: this.stock[item]! };
+    }
+    return null;
+  }
+
+  /**
+   * Takes a price out of stock. Deliberately does not touch `delivered`: building
+   * must never set mission progress back (GDD 6.3). The caller checks `canAfford`.
+   */
+  spend(cost: readonly Cost[]): void {
+    for (const { item, count } of cost) this.stock[item]! -= count;
+  }
+
+  /** Gives a price back, up to the stock cap. */
+  refund(cost: readonly Cost[]): void {
+    for (const { item, count } of cost) {
+      this.stock[item] = Math.min(HUB_STOCK_CAP, this.stock[item]! + count);
+    }
+  }
+
+  /**
+   * Adds to stock without counting as delivered: starting supplies and hand-mined
+   * ore are usable for building but are not production, so they must not advance
+   * missions.
+   */
+  addStock(item: ItemId, count: number): void {
+    this.stock[item] = Math.min(HUB_STOCK_CAP, this.stock[item]! + count);
   }
 
   /** Called once per simulated second. */

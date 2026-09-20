@@ -8,6 +8,7 @@
  */
 
 import type { Vec2 } from '../core/grid';
+import { itemName } from '../data/items';
 import type { BuildingDef, Rotation } from '../sim/types';
 
 export interface HudCallbacks {
@@ -21,8 +22,8 @@ export interface HudCallbacks {
 
 export interface StockRow {
   name: string;
-  /** The raw material's prime (GDD 5.1). */
-  prime: number;
+  /** The item's prime factorisation, already formatted (GDD 5). */
+  signature: string;
   color: number;
   stock: number;
   perMinute: number;
@@ -138,7 +139,7 @@ export class Hud {
 
       const prime = document.createElement('span');
       prime.className = 'stock__prime';
-      prime.textContent = `소수 ${row.prime}`;
+      prime.textContent = `서명 ${row.signature}`;
 
       const count = document.createElement('span');
       count.className = 'stock__count';
@@ -150,6 +151,14 @@ export class Hud {
 
       line.append(swatch, name, prime, count, rate);
       this.stockEl.appendChild(line);
+    }
+  }
+
+  /** Marks the build buttons the current stock cannot pay for. */
+  setAffordable(affordable: ReadonlySet<string>): void {
+    for (const [id, button] of this.buttons) {
+      if (id === 'erase') continue;
+      button.classList.toggle('tool--poor', !affordable.has(id));
     }
   }
 
@@ -170,7 +179,9 @@ export class Hud {
       `<span class="tool__name"></span>` +
       `<span class="tool__size"></span>`;
     button.querySelector('.tool__name')!.textContent = def.name;
-    button.querySelector('.tool__size')!.textContent = `${def.w}×${def.h}`;
+    const price = (def.cost ?? []).map((c) => `${itemName(c.item)} ${c.count}`).join(' · ');
+    button.querySelector('.tool__size')!.textContent = price ? `${def.w}×${def.h} · ${price}` : `${def.w}×${def.h}`;
+    button.title = price ? `건설비: ${price}` : '무료';
     button.addEventListener('click', () => {
       const next = this.buttons.get(def.id)?.classList.contains('is-active') ? null : def.id;
       this.callbacks.onSelectBuilding(next);

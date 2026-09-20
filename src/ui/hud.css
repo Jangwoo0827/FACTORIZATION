@@ -330,6 +330,18 @@ body {
   font-size: 11px;
   color: var(--text-dim);
   text-align: left;
+  white-space: normal;
+  max-width: 130px;
+}
+
+/* A building the current stock cannot pay for: still selectable (the ghost then says
+   what is missing) but visibly out of reach. */
+.tool--poor {
+  opacity: 0.55;
+}
+
+.tool--poor .tool__size {
+  color: var(--danger);
 }
 
 /* ---------------------------------------------------------------- adaptive */

@@ -35,12 +35,16 @@ import { dirFromStep } from '../core/dir';
 import { footprintOrigin, worldToTile, type Vec2 } from '../core/grid';
 import { tileLine, walkGrid } from '../core/line';
 import { BUILDABLE_DEFS, DEF_MAP } from '../data/buildings';
+import { STARTING_STOCK } from '../data/economy';
+import { ITEM_DEFS, itemName } from '../data/items';
+import { RECIPE_BOOK } from '../data/recipes';
+import { formatSignature } from '../factor/signature';
 import { CompositeCommand, History, PlaceCommand, RemoveCommand, type Command } from '../input/commands';
+import { Builder } from '../sim/builder';
 import { InputAdapter } from '../input/InputAdapter';
 import { buildRings, createBenchWorld, fillBelts } from '../sim/bench';
 import { Simulation, placeHub } from '../sim/simulation';
 import {
-  ITEM_COUNT,
   ORE_INFO,
   Ore,
   PLACEMENT_MESSAGE,
@@ -75,6 +79,8 @@ export class Game {
   private readonly rig = new CameraRig();
   private readonly world: World;
   private readonly sim: Simulation;
+  /** Every change the player makes goes through this, so stock and buildings stay in step. */
+  private readonly builder: Builder;
   private readonly worldView: WorldView;
   private readonly itemView: ItemView;
   private readonly ghost: GhostView;
@@ -146,6 +152,10 @@ export class Game {
     this.world = bench ? createBenchWorld(MAP_SIZE) : generateWorld(MAP_SIZE, DEFAULT_SEED, DEF_MAP);
     placeHub(this.world);
     this.sim = new Simulation(this.world);
+    this.builder = new Builder(this.world, this.sim.sieve);
+    if (!bench) {
+      for (const { item, count } of STARTING_STOCK) this.sim.sieve.addStock(item, count);
+    }
     if (bench) {
       buildRings(this.world, 5000);
       fillBelts(this.sim, 2);
@@ -399,19 +409,22 @@ export class Game {
   }
 
   private refreshStock(): void {
+    const sieve = this.sim.sieve;
     const rows: StockRow[] = [];
-    for (let item = 1; item < ITEM_COUNT; item++) {
-      const info = ORE_INFO[item as Exclude<Ore, 0>];
-      if (!info || this.sim.sieve.delivered[item] === 0) continue;
+    for (const def of ITEM_DEFS) {
+      // Anything the player holds or has ever delivered. Held alone counts: the
+      // starting plates are usable long before the first delivery.
+      if (sieve.stock[def.id] === 0 && sieve.delivered[def.id] === 0) continue;
       rows.push({
-        name: info.name,
-        prime: info.prime,
-        color: info.color,
-        stock: this.sim.sieve.stock[item]!,
-        perMinute: this.sim.sieve.perMinute(item),
+        name: def.name,
+        signature: formatSignature(RECIPE_BOOK.signature(def.id)),
+        color: def.color,
+        stock: sieve.stock[def.id]!,
+        perMinute: sieve.perMinute(def.id),
       });
     }
     this.hud.setStock(rows);
+    this.hud.setAffordable(new Set(BUILDABLE_DEFS.filter((d) => this.builder.canAfford(d.id)).map((d) => d.id)));
   }
 
   private onResize = (): void => {
@@ -483,6 +496,21 @@ export class Game {
 
   private inspect(tile: Vec2): void {
     this.setHover({ x: tile.x + 0.5, y: tile.y + 0.5 });
+
+    // Clicking bare ore with no tool held mines it by hand (GDD 6.3). This is what
+    // keeps a player who has spent their stone from being stuck: stone is used
+    // directly to build smelters.
+    if (
+      this.world.inBounds(tile.x, tile.y) &&
+      !this.world.buildingAt(tile.x, tile.y) &&
+      this.world.oreAt(tile.x, tile.y) !== Ore.None
+    ) {
+      const ore = this.world.oreAt(tile.x, tile.y);
+      this.sim.sieve.addStock(ore, 1);
+      this.hud.setHint(`${itemName(ore)} +1 (직접 채굴)`);
+      this.refreshStock();
+      return;
+    }
     this.hud.setHint(this.describeTile(tile));
   }
 
@@ -551,10 +579,10 @@ export class Game {
     if (this.strokeTiles.has(key)) return false;
     this.strokeTiles.add(key);
 
-    if (!this.world.checkPlacement('conveyor', tile.x, tile.y, dir).ok) return false;
+    if (!this.builder.checkPlacement('conveyor', tile.x, tile.y, dir).ok) return false;
 
     const command = new PlaceCommand('conveyor', tile.x, tile.y, dir);
-    command.redo(this.world);
+    if (!command.redo(this.builder)) return false;
     this.strokeBelts.set(key, this.stroke.length);
     this.stroke.push(command);
     return true;
@@ -568,15 +596,15 @@ export class Game {
     const old = this.stroke[index] as PlaceCommand;
     if (old.building?.rot === dir) return;
 
-    old.undo(this.world);
+    old.undo(this.builder);
     const turned = new PlaceCommand('conveyor', tile.x, tile.y, dir);
-    turned.redo(this.world);
+    turned.redo(this.builder);
     this.stroke[index] = turned;
   }
 
   private endStroke(cancelled: boolean): void {
     if (cancelled) {
-      for (let i = this.stroke.length - 1; i >= 0; i--) this.stroke[i]!.undo(this.world);
+      for (let i = this.stroke.length - 1; i >= 0; i--) this.stroke[i]!.undo(this.builder);
     } else if (this.stroke.length > 0) {
       this.history.record(
         this.stroke.length === 1 ? this.stroke[0]! : new CompositeCommand(this.stroke),
@@ -606,10 +634,10 @@ export class Game {
     if (this.strokeTiles.has(key)) return;
     this.strokeTiles.add(key);
 
-    if (!this.world.checkPlacement(defId, origin.x, origin.y, this.rotation).ok) return;
+    if (!this.builder.checkPlacement(defId, origin.x, origin.y, this.rotation).ok) return;
 
     const command = new PlaceCommand(defId, origin.x, origin.y, this.rotation);
-    command.redo(this.world);
+    if (!command.redo(this.builder)) return;
     if (def.kind === 'belt') this.strokeBelts.set(key, this.stroke.length);
     this.stroke.push(command);
   }
@@ -625,7 +653,7 @@ export class Game {
     if (DEF_MAP.get(building.defId)?.removable === false) return;
 
     const command = new RemoveCommand(building);
-    command.redo(this.world);
+    if (!command.redo(this.builder)) return;
     this.stroke.push(command);
   }
 
@@ -635,13 +663,17 @@ export class Game {
   }
 
   private undo(): void {
-    if (!this.history.undo(this.world)) return;
+    const result = this.history.undo(this.builder);
+    if (result === 'blocked') this.hud.setHint('재고가 부족해 되돌릴 수 없습니다.');
+    if (result !== 'done') return;
     this.refreshGhost();
     this.refreshHud();
   }
 
   private redo(): void {
-    if (!this.history.redo(this.world)) return;
+    const result = this.history.redo(this.builder);
+    if (result === 'blocked') this.hud.setHint('재고가 부족해 다시 실행할 수 없습니다.');
+    if (result !== 'done') return;
     this.refreshGhost();
     this.refreshHud();
   }
@@ -715,7 +747,7 @@ export class Game {
     const origin = this.originFor(def, this.hoverPoint ?? { x: hover.x + 0.5, y: hover.y + 0.5 });
     this.hoverOrigin = origin;
     const { w, h } = rotatedSize(def, this.rotation);
-    const valid = this.world.checkPlacement(defId, origin.x, origin.y, this.rotation).ok;
+    const valid = this.builder.checkPlacement(defId, origin.x, origin.y, this.rotation).ok;
     this.ghost.showBuilding(
       origin.x,
       origin.y,
@@ -826,7 +858,12 @@ export class Game {
     const def = DEF_MAP.get(defId);
     if (!def) return null;
     const origin = this.originFor(def, this.hoverPoint ?? { x: tile.x + 0.5, y: tile.y + 0.5 });
-    const result = this.world.checkPlacement(defId, origin.x, origin.y, this.rotation);
-    return result.ok ? null : PLACEMENT_MESSAGE[result.reason];
+    const result = this.builder.checkPlacement(defId, origin.x, origin.y, this.rotation);
+    if (result.ok) return null;
+    if (result.reason === 'cannot-afford') {
+      const missing = this.builder.shortfall(defId);
+      if (missing) return `재고 부족 — ${itemName(missing.item)} ${missing.need} 필요 (보유 ${missing.have})`;
+    }
+    return PLACEMENT_MESSAGE[result.reason];
   }
 }

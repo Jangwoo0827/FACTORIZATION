@@ -66,6 +66,12 @@ export type BuildingKind =
   | 'machine'
   | 'passive';
 
+/** An amount of one item: a price, or one line of a recipe. */
+export interface Cost {
+  readonly item: ItemId;
+  readonly count: number;
+}
+
 /** Kinds that carry items along a direction the way a conveyor does. */
 export function isBeltKind(kind: BuildingKind): boolean {
   return kind === 'belt' || kind === 'tunnel-in' || kind === 'tunnel-out';
@@ -83,6 +89,8 @@ export interface BuildingDef {
   readonly kind: BuildingKind;
   /** Present on `machine` buildings. */
   readonly machine?: MachineSpec;
+  /** What it costs to build, taken from the hub's stock. Free when absent. */
+  readonly cost?: readonly Cost[];
   /** Footprint at rotation 0, in tiles. */
   readonly w: number;
   readonly h: number;
@@ -106,7 +114,13 @@ export interface PlacedBuilding {
   readonly rot: Rotation;
 }
 
-export type PlacementError = 'out-of-bounds' | 'terrain' | 'occupied' | 'needs-ore' | 'unknown-def';
+export type PlacementError =
+  | 'out-of-bounds'
+  | 'terrain'
+  | 'occupied'
+  | 'needs-ore'
+  | 'unknown-def'
+  | 'cannot-afford';
 
 export type PlacementResult = { ok: true } | { ok: false; reason: PlacementError };
 
@@ -116,6 +130,7 @@ export const PLACEMENT_MESSAGE: Readonly<Record<PlacementError, string>> = {
   occupied: '이미 건물이 있습니다',
   'needs-ore': '광석 위에만 지을 수 있습니다',
   'unknown-def': '알 수 없는 건물입니다',
+  'cannot-afford': '재고가 부족합니다',
 };
 
 /** Footprint size after rotation. Odd quarter turns swap the axes. */

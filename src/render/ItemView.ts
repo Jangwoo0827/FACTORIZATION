@@ -22,7 +22,8 @@ import {
 import { DX, DY } from '../core/dir';
 import { SLOTS, STRAIGHT } from '../sim/belts';
 import type { Simulation } from '../sim/simulation';
-import { ITEM_COUNT, ORE_INFO, Ore } from '../sim/types';
+import { ITEM_DEFS } from '../data/items';
+import { ITEM_COUNT } from '../sim/types';
 
 /** Comfortably above what fits on the map: 128x128 tiles x 4 slots is 65,536. */
 const CAPACITY = 40000;
@@ -59,10 +60,9 @@ export class ItemView {
     this.colours = colourAttribute.array as Float32Array;
 
     const colour = new Color();
-    for (let item = Ore.Iron; item < ITEM_COUNT; item++) {
-      const info = ORE_INFO[item as keyof typeof ORE_INFO];
-      colour.setHex(info?.color ?? 0xffffff);
-      this.palette.set([colour.r, colour.g, colour.b], item * 3);
+    for (const def of ITEM_DEFS) {
+      colour.setHex(def.color);
+      this.palette.set([colour.r, colour.g, colour.b], def.id * 3);
     }
 
     // Identity rotation and a fixed scale never change, so write them once.

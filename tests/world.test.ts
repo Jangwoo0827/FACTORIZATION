@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { CompositeCommand, History, PlaceCommand, RemoveCommand } from '../src/input/commands';
+import { Builder } from '../src/sim/builder';
+import { Sieve } from '../src/sim/sieve';
 import { Ore, Terrain, type BuildingDef } from '../src/sim/types';
 import { World } from '../src/sim/world';
 
@@ -76,59 +78,63 @@ describe('World placement', () => {
 
 describe('command history', () => {
   let world: World;
+  let builder: Builder;
   let history: History;
 
   beforeEach(() => {
     world = makeWorld();
+    // These test defs are free, so the economy never gets in the way here; it has
+    // its own tests in economy.test.ts.
+    builder = new Builder(world, new Sieve());
     history = new History();
   });
 
   it('undoes and redoes a placement, preserving the building id', () => {
     const command = new PlaceCommand('belt', 2, 2, 0);
-    history.execute(command, world);
+    history.execute(command, builder);
     const originalId = world.buildingAt(2, 2)!.id;
 
-    expect(history.undo(world)).toBe(true);
+    expect(history.undo(builder)).toBe('done');
     expect(world.buildingAt(2, 2)).toBeNull();
 
-    expect(history.redo(world)).toBe(true);
+    expect(history.redo(builder)).toBe('done');
     expect(world.buildingAt(2, 2)!.id).toBe(originalId);
   });
 
   it('restores a removed building with its original identity', () => {
     const placed = world.place('big', 4, 4, 0)!;
-    history.execute(new RemoveCommand(placed), world);
+    history.execute(new RemoveCommand(placed), builder);
     expect(world.buildingCount).toBe(0);
 
-    history.undo(world);
+    history.undo(builder);
     expect(world.buildingAt(5, 5)!.id).toBe(placed.id);
     expect(world.buildingAt(5, 5)!.rot).toBe(placed.rot);
   });
 
   it('treats a drag stroke as one undo step', () => {
     const commands = [0, 1, 2, 3].map((i) => new PlaceCommand('belt', i, 0, 0));
-    for (const c of commands) c.redo(world);
+    for (const c of commands) c.redo(builder);
     history.record(new CompositeCommand(commands));
     expect(world.buildingCount).toBe(4);
 
-    history.undo(world);
+    history.undo(builder);
     expect(world.buildingCount).toBe(0);
 
-    history.redo(world);
+    history.redo(builder);
     expect(world.buildingCount).toBe(4);
   });
 
   it('drops the redo branch once new work is recorded', () => {
-    history.execute(new PlaceCommand('belt', 1, 1, 0), world);
-    history.undo(world);
+    history.execute(new PlaceCommand('belt', 1, 1, 0), builder);
+    history.undo(builder);
     expect(history.canRedo).toBe(true);
 
-    history.execute(new PlaceCommand('belt', 2, 2, 0), world);
+    history.execute(new PlaceCommand('belt', 2, 2, 0), builder);
     expect(history.canRedo).toBe(false);
   });
 
   it('reports nothing to undo on an empty history', () => {
     expect(history.canUndo).toBe(false);
-    expect(history.undo(world)).toBe(false);
+    expect(history.undo(builder)).toBe('nothing');
   });
 });

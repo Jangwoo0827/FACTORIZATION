@@ -109,6 +109,14 @@ export class World {
     return this.placed.values();
   }
 
+  defById(defId: string): BuildingDef | undefined {
+    return this.defs.get(defId);
+  }
+
+  buildingById(id: number): PlacedBuilding | null {
+    return this.placed.get(id) ?? null;
+  }
+
   defOf(building: PlacedBuilding): BuildingDef | undefined {
     return this.defs.get(building.defId);
   }
