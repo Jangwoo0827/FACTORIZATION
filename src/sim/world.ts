@@ -26,6 +26,7 @@ export class World {
   private readonly occupancy: Int32Array;
   private readonly placed = new Map<number, PlacedBuilding>();
   private nextId = 1;
+  private revisionCounter = 0;
 
   constructor(size: number, defs: ReadonlyMap<string, BuildingDef>) {
     this.size = size;
@@ -37,6 +38,15 @@ export class World {
 
   get buildingCount(): number {
     return this.placed.size;
+  }
+
+  /**
+   * Increments on every placement, removal or re-insertion. The simulation compares
+   * it against the value it last saw to know when its derived structures (belt
+   * topology, miner outputs) are stale, so nothing has to notify it explicitly.
+   */
+  get revision(): number {
+    return this.revisionCounter;
   }
 
   index(x: number, y: number): number {
@@ -108,6 +118,7 @@ export class World {
     const building: PlacedBuilding = { id: this.nextId++, defId, x, y, rot };
     this.stamp(building, building.id);
     this.placed.set(building.id, building);
+    this.revisionCounter++;
     return building;
   }
 
@@ -120,6 +131,7 @@ export class World {
     this.stamp(building, building.id);
     this.placed.set(building.id, building);
     if (building.id >= this.nextId) this.nextId = building.id + 1;
+    this.revisionCounter++;
     return true;
   }
 
@@ -128,6 +140,7 @@ export class World {
     if (!building) return null;
     this.stamp(building, EMPTY);
     this.placed.delete(id);
+    this.revisionCounter++;
     return building;
   }
 

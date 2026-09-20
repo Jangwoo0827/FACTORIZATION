@@ -42,6 +42,17 @@ export const CAMERA_DISTANCE = 400;
 
 /** Simulation rate (GDD 14.3). Rendering runs at display rate. */
 export const SIM_TPS = 30;
+/** Longest frame the sim will try to catch up on, so a stalled tab does not spiral. */
+export const MAX_SIM_STEPS_PER_FRAME = 5;
+
+/** Conveyor Mk1 speed (GDD 7.1). With 4 items per tile at 0.25 spacing this carries 6 items/s. */
+export const BELT_SPEED_MK1 = 1.5;
+/** Ore a Mk1 miner yields per second for each ore tile under it (GDD 6.1: 4 tiles = 0.5/s). */
+export const MINER_MK1_RATE_PER_TILE = 0.125;
+/** Items a miner holds while its output belt is blocked. */
+export const MINER_BUFFER = 5;
+/** Hub stock ceiling per item (GDD 6.3). Deliveries past it still count toward missions. */
+export const HUB_STOCK_CAP = 9999;
 
 /** Tiles per second the camera travels under keyboard panning. */
 export const KEYBOARD_PAN_TILES_PER_SEC = 24;

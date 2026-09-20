@@ -37,12 +37,25 @@ export const ORE_INFO: Readonly<Record<Exclude<Ore, 0>, OreInfo>> = {
   [Ore.Quartz]: { name: '석영', prime: 13, color: 0x9fd0d6 },
 };
 
-/** Quarter turns clockwise. */
+/**
+ * Items are small integers. Raw materials reuse their `Ore` value, so an item id and
+ * the ore it was mined from are the same number until processed goods arrive in M2.
+ */
+export type ItemId = number;
+
+/** Highest item id + 1: the size of any per-item lookup table. */
+export const ITEM_COUNT = 8;
+
+/** Quarter turns. See `core/dir.ts` for what each value points at. */
 export type Rotation = 0 | 1 | 2 | 3;
+
+/** What a building does in the simulation. Rendering and rules key off this, not the id. */
+export type BuildingKind = 'hub' | 'belt' | 'miner' | 'passive';
 
 export interface BuildingDef {
   readonly id: string;
   readonly name: string;
+  readonly kind: BuildingKind;
   /** Footprint at rotation 0, in tiles. */
   readonly w: number;
   readonly h: number;
@@ -51,6 +64,10 @@ export interface BuildingDef {
   readonly height: number;
   /** Miners must sit on ore (GDD 6.1). */
   readonly needsOre: boolean;
+  /** Offered in the build bar. Defaults to true; the hub is placed by the game, not the player. */
+  readonly buildable?: boolean;
+  /** Can be erased. Defaults to true. */
+  readonly removable?: boolean;
 }
 
 export interface PlacedBuilding {
