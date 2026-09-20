@@ -151,6 +151,12 @@ export class RecipeBook {
     return this.rawItems.has(item);
   }
 
+  /** The raw material that is the prime at `index`, or undefined if none is. */
+  rawItemOf(primeIndex: number): ItemId | undefined {
+    for (const [item, index] of this.rawPrimeIndex) if (index === primeIndex) return item;
+    return undefined;
+  }
+
   recipe(item: ItemId): RecipeDef | undefined {
     return this.recipes.get(item);
   }

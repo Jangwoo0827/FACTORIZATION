@@ -22,6 +22,7 @@ import {
 import { DX, DY } from '../core/dir';
 import { SLOTS, STRAIGHT } from '../sim/belts';
 import type { Simulation } from '../sim/simulation';
+import { DEF_MAP } from '../data/buildings';
 import { ITEM_DEFS } from '../data/items';
 import { ITEM_COUNT } from '../sim/types';
 
@@ -31,6 +32,8 @@ const ITEM_SIZE = 0.2;
 /** Belt slab height, so items sit on top of it rather than inside it. */
 const BELT_TOP = 0.14;
 const ITEM_Y = BELT_TOP + ITEM_SIZE / 2;
+/** A splitter is taller than a belt; the item it holds rides on top of it. */
+const SPLITTER_Y = (DEF_MAP.get('splitter')?.height ?? 0.34) + ITEM_SIZE / 2;
 
 export class ItemView {
   private readonly mesh: InstancedMesh;
@@ -94,7 +97,24 @@ export class ItemView {
     outer: for (let t = 0; t < tiles.length; t++) {
       const tile = tiles[t]!;
       const count = belts.count[tile]!;
-      if (count === 0) continue;
+      if (count === 0) {
+        // A splitter holds its one item in a separate slot, and would otherwise be
+        // invisible while everything behind it waited.
+        const held = belts.splitterItem[tile]!;
+        if (held !== 0 && n < CAPACITY) {
+          const tx = tile % size;
+          const m = n * 16;
+          matrices[m + 12] = tx + 0.5;
+          matrices[m + 13] = SPLITTER_Y;
+          matrices[m + 14] = (tile - tx) / size + 0.5;
+          const c = n * 3;
+          colours[c] = palette[held * 3]!;
+          colours[c + 1] = palette[held * 3 + 1]!;
+          colours[c + 2] = palette[held * 3 + 2]!;
+          n++;
+        }
+        continue;
+      }
 
       const d = belts.dir[tile]!;
       const x = tile % size;

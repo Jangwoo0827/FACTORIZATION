@@ -11,8 +11,40 @@ import type { Vec2 } from '../core/grid';
 import { itemName } from '../data/items';
 import type { BuildingDef, Rotation } from '../sim/types';
 
+/** One recipe a machine could be set to. */
+export interface RecipeChoice {
+  item: number;
+  name: string;
+  color: number;
+  signature: string;
+  ingredients: string;
+  seconds: number;
+}
+
+export interface InspectorOptions {
+  title: string;
+  recipes: readonly RecipeChoice[];
+  /** Called with the chosen item, or 0 when the current recipe is clicked again to clear it. */
+  onPick(item: number): void;
+}
+
+export type StatusKind = 'working' | 'waiting' | 'blocked' | 'idle';
+
+/** What changes from moment to moment while a machine is selected. */
+export interface InspectorLive {
+  statusText: string;
+  statusKind: StatusKind;
+  /** The item currently set, or 0. */
+  recipe: number;
+  buffers: readonly { name: string; have: number; cap: number }[];
+  /** 0..1 through the current craft. */
+  progress: number;
+  output: number;
+}
+
 export interface HudCallbacks {
   onSelectBuilding(defId: string | null): void;
+  onToggleFactor(): void;
   onSelectErase(): void;
   onRotate(): void;
   onRotateView(delta: -1 | 1): void;
@@ -54,6 +86,15 @@ export class Hud {
   private readonly controls: HTMLElement;
   private readonly stockEl: HTMLElement;
   private readonly perfEl: HTMLElement;
+  private readonly inspectorEl: HTMLElement;
+  private inspector: {
+    dot: HTMLElement;
+    status: HTMLElement;
+    recipes: Map<number, HTMLElement>;
+    buffers: HTMLElement;
+    bar: HTMLElement;
+    output: HTMLElement;
+  } | null = null;
 
   constructor(defs: readonly BuildingDef[], private readonly callbacks: HudCallbacks) {
     this.statusEl = requireElement('hud-status');
@@ -64,6 +105,7 @@ export class Hud {
     this.controls = requireElement('hud-controls');
     this.stockEl = requireElement('hud-stock');
     this.perfEl = requireElement('hud-perf');
+    this.inspectorEl = requireElement('hud-inspector');
 
     this.buildBar.replaceChildren();
     for (const def of defs) {
@@ -154,6 +196,132 @@ export class Hud {
     }
   }
 
+  get inspectorOpen(): boolean {
+    return !this.inspectorEl.hidden;
+  }
+
+  /**
+   * Opens the machine panel. The parts that do not change while it is open (the
+   * recipe list) are built once here, so a click is never lost to a redraw between
+   * the press and the release; the live parts are updated in place.
+   */
+  openInspector(options: InspectorOptions): void {
+    const root = this.inspectorEl;
+    root.replaceChildren();
+
+    const head = document.createElement('div');
+    head.className = 'panel__head';
+    const title = document.createElement('span');
+    title.className = 'panel__title';
+    title.textContent = options.title;
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'panel__close';
+    close.textContent = '×';
+    close.setAttribute('aria-label', '닫기');
+    close.addEventListener('click', () => this.closeInspector());
+    head.append(title, close);
+
+    const statusRow = document.createElement('div');
+    statusRow.className = 'inspector__status';
+    const dot = document.createElement('span');
+    dot.className = 'status-dot';
+    const status = document.createElement('span');
+    statusRow.append(dot, status);
+
+    const recipeLabel = document.createElement('div');
+    recipeLabel.className = 'section-label';
+    recipeLabel.textContent = '레시피';
+
+    const list = document.createElement('div');
+    list.className = 'recipe-list';
+    const recipes = new Map<number, HTMLElement>();
+    for (const recipe of options.recipes) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'recipe';
+
+      const swatch = document.createElement('span');
+      swatch.className = 'recipe__swatch';
+      swatch.style.background = hex(recipe.color);
+      const name = document.createElement('span');
+      name.className = 'recipe__name';
+      name.textContent = `${recipe.name}  ${recipe.signature}`;
+      const time = document.createElement('span');
+      time.className = 'recipe__time';
+      time.textContent = `${recipe.seconds}초`;
+      const detail = document.createElement('span');
+      detail.className = 'recipe__detail';
+      detail.textContent = recipe.ingredients;
+      button.append(swatch, name, time, detail);
+
+      button.addEventListener('click', () =>
+        options.onPick(button.classList.contains('is-active') ? 0 : recipe.item),
+      );
+      recipes.set(recipe.item, button);
+      list.appendChild(button);
+    }
+
+    const bufferLabel = document.createElement('div');
+    bufferLabel.className = 'section-label';
+    bufferLabel.textContent = '재료 버퍼';
+    const buffers = document.createElement('div');
+
+    const progress = document.createElement('div');
+    progress.className = 'progress';
+    const bar = document.createElement('div');
+    bar.className = 'progress__bar';
+    progress.appendChild(bar);
+
+    const output = document.createElement('div');
+    output.className = 'section-label';
+
+    root.append(head, statusRow, recipeLabel, list, bufferLabel, buffers, progress, output);
+    root.hidden = false;
+    this.inspector = { dot, status, recipes, buffers, bar, output };
+  }
+
+  updateInspector(live: InspectorLive): void {
+    const ui = this.inspector;
+    if (!ui) return;
+
+    ui.dot.className = `status-dot status-dot--${live.statusKind}`;
+    ui.status.textContent = live.statusText;
+
+    for (const [item, button] of ui.recipes) {
+      const active = item === live.recipe;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-pressed', String(active));
+    }
+
+    ui.buffers.replaceChildren();
+    if (live.buffers.length === 0) {
+      const none = document.createElement('div');
+      none.className = 'stock__empty';
+      none.textContent = '레시피를 고르세요.';
+      ui.buffers.appendChild(none);
+    }
+    for (const buffer of live.buffers) {
+      const row = document.createElement('div');
+      row.className = buffer.have >= buffer.cap ? 'buffer-row buffer-row--full' : 'buffer-row';
+      const name = document.createElement('span');
+      name.textContent = buffer.name;
+      const count = document.createElement('span');
+      count.textContent = `${buffer.have} / ${buffer.cap}`;
+      row.append(name, count);
+      ui.buffers.appendChild(row);
+    }
+
+    ui.bar.style.width = `${Math.round(Math.min(1, Math.max(0, live.progress)) * 100)}%`;
+    ui.output.textContent = `출력 대기 ${live.output}`;
+  }
+
+  closeInspector(): void {
+    this.inspectorEl.hidden = true;
+    this.inspectorEl.replaceChildren();
+    this.inspector = null;
+  }
+
   /** Marks the build buttons the current stock cannot pay for. */
   setAffordable(affordable: ReadonlySet<string>): void {
     for (const [id, button] of this.buttons) {
@@ -210,6 +378,9 @@ export class Hud {
     switch (target.dataset['action']) {
       case 'rotate':
         this.callbacks.onRotate();
+        return;
+      case 'factor':
+        this.callbacks.onToggleFactor();
         return;
       case 'view-left':
         this.callbacks.onRotateView(-1);

@@ -154,6 +154,17 @@ export function machineSpeed(machine: MachineClass, tier: 1 | 2): number {
   return tier === 1 ? 1 : 1.5;
 }
 
+/** How each machine class is named on screen. */
+export const MACHINE_LABEL: Readonly<Record<MachineClass, string>> = {
+  smelter: '제련로',
+  assembler: '조립기',
+};
+
+/** A recipe's ingredients as text, e.g. `철판 ×1 · 구리전선 ×2`. */
+export function ingredientsText(recipe: RecipeDef, nameOf: (item: number) => string): string {
+  return recipe.inputs.map((i) => `${nameOf(i.item)} ×${i.count}`).join(' · ');
+}
+
 /**
  * Built at load. A recipe that breaks the signature rules throws here, at import,
  * rather than surfacing later as a wrong number somewhere in the UI.

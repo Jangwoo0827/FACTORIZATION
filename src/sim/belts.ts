@@ -52,7 +52,7 @@ export class BeltGrid {
    * the next: `splitterItem` is 0 when empty, `splitterFrom` the side it came in by
    * (never used as an exit), and `splitterNext` where the round robin starts.
    */
-  private readonly splitterItem: Uint8Array;
+  readonly splitterItem: Uint8Array;
   private readonly splitterFrom: Uint8Array;
   private readonly splitterNext: Uint8Array;
   /**

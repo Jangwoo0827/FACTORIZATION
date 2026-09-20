@@ -29,7 +29,7 @@ import { MAP_SIZE } from '../config';
 import { footprintCenter } from '../core/grid';
 import { arrowRotation, createArrowGeometry } from './arrow';
 import { DEF_MAP } from '../data/buildings';
-import { ORE_INFO, Ore, Terrain, rotatedSize, type BuildingDef } from '../sim/types';
+import { ORE_INFO, Ore, Terrain, isBeltKind, rotatedSize, type BuildingDef } from '../sim/types';
 import type { World } from '../sim/world';
 
 const GROUND_COLOR = 0x2f362c;
@@ -102,7 +102,7 @@ export class WorldView {
       this.writeSlabs(def, items);
       // A belt is a slab plus an arrow on top of it: without the arrow there is no
       // way to tell which way a line of belts carries anything.
-      if (def.kind === 'belt') this.writeArrows(def, items);
+      if (isBeltKind(def.kind)) this.writeArrows(def, items);
     }
   }
 

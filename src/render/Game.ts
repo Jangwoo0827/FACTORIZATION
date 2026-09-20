@@ -18,6 +18,7 @@ import {
   DEFAULT_SEED,
   DEFAULT_VIEW_SIZE,
   KEYBOARD_PAN_TILES_PER_SEC,
+  MACHINE_INPUT_MULTIPLE,
   MAP_SIZE,
   MINER_BUFFER,
   SIM_AWAY_CATCHUP_SECONDS,
@@ -27,6 +28,7 @@ import {
   SIM_CATCHUP_NOTICE_SECONDS,
   SIM_LIVE_BACKLOG_SECONDS,
   SIM_TPS,
+  TUNNEL_RANGE,
   YAW_SPEED,
   YAW_STEP,
 } from '../config';
@@ -36,18 +38,28 @@ import { footprintOrigin, worldToTile, type Vec2 } from '../core/grid';
 import { tileLine, walkGrid } from '../core/line';
 import { BUILDABLE_DEFS, DEF_MAP } from '../data/buildings';
 import { STARTING_STOCK } from '../data/economy';
-import { ITEM_DEFS, itemName } from '../data/items';
-import { RECIPE_BOOK } from '../data/recipes';
+import { ITEM_DEFS, ITEM_MAP, Item, itemName } from '../data/items';
+import { RECIPE_BOOK, ingredientsText } from '../data/recipes';
 import { formatSignature } from '../factor/signature';
-import { CompositeCommand, History, PlaceCommand, RemoveCommand, type Command } from '../input/commands';
+import {
+  CompositeCommand,
+  History,
+  PlaceCommand,
+  RemoveCommand,
+  SetRecipeCommand,
+  type Command,
+} from '../input/commands';
 import { Builder } from '../sim/builder';
 import { InputAdapter } from '../input/InputAdapter';
 import { buildRings, createBenchWorld, fillBelts } from '../sim/bench';
 import { Simulation, placeHub } from '../sim/simulation';
+import type { MachineClass } from '../factor/recipeBook';
+import type { MachineStatus } from '../sim/machines';
 import {
   ORE_INFO,
   Ore,
   PLACEMENT_MESSAGE,
+  isBeltKind,
   Terrain,
   rotatedSize,
   type BuildingDef,
@@ -57,10 +69,12 @@ import {
 import type { World } from '../sim/world';
 import { generateWorld } from '../sim/worldgen';
 import { Heartbeat } from '../runtime/heartbeat';
-import { Hud, type StockRow } from '../ui/Hud';
+import { FactorPanel } from '../ui/FactorPanel';
+import { Hud, type InspectorLive, type RecipeChoice, type StockRow } from '../ui/Hud';
 import { CameraRig } from './CameraRig';
 import { GhostView } from './GhostView';
 import { ItemView } from './ItemView';
+import { MachineStatusView } from './MachineStatusView';
 import { fitRenderer } from './viewport';
 import { WorldView } from './WorldView';
 
@@ -73,6 +87,13 @@ const HUD_REFRESH_MS = 250;
 const PERF_REFRESH_MS = 500;
 const SIM_DT = 1 / SIM_TPS;
 
+const MACHINE_STATUS_TEXT: Readonly<Record<MachineStatus, string>> = {
+  'no-recipe': '레시피 없음',
+  working: '▶ 작동',
+  waiting: '⏸ 재료 대기',
+  blocked: '⛔ 출력 막힘',
+};
+
 export class Game {
   private readonly renderer: WebGLRenderer;
   private readonly scene = new Scene();
@@ -83,6 +104,8 @@ export class Game {
   private readonly builder: Builder;
   private readonly worldView: WorldView;
   private readonly itemView: ItemView;
+  private readonly machineStatus: MachineStatusView;
+  private readonly factorPanel: FactorPanel;
   private readonly ghost: GhostView;
   private readonly adapter: InputAdapter;
   private readonly hud: Hud;
@@ -126,6 +149,11 @@ export class Game {
   /** World revision the meshes were last built from. */
   private viewRevision = -1;
 
+  /** The machine whose panel is open, if any. */
+  private selectedMachineId: number | null = null;
+  /** What each kind of machine was last set to, so a new one starts with the same recipe. */
+  private readonly lastRecipe = new Map<MachineClass, number>();
+
   private readonly debug: boolean;
   private lastHudRefresh = 0;
   private perfSince = performance.now();
@@ -163,6 +191,8 @@ export class Game {
 
     this.worldView = new WorldView(this.scene, this.world);
     this.itemView = new ItemView(this.scene, this.sim);
+    this.machineStatus = new MachineStatusView(this.scene, this.sim);
+    this.factorPanel = new FactorPanel(document.getElementById('hud-factor')!, Item.GateComponent);
     this.ghost = new GhostView(this.scene);
 
     this.rig.lookAtTile(MAP_SIZE / 2, MAP_SIZE / 2);
@@ -170,6 +200,7 @@ export class Game {
     this.hud = new Hud(BUILDABLE_DEFS, {
       onSelectBuilding: (id) => this.selectBuilding(id),
       onSelectErase: () => this.toggleErase(),
+      onToggleFactor: () => this.factorPanel.toggle(),
       onRotate: () => this.rotateBuilding(),
       onRotateView: (delta) => {
         this.rig.rotateYaw(delta * YAW_STEP);
@@ -204,6 +235,7 @@ export class Game {
         onRotate: () => this.rotateBuilding(),
         onUndo: () => this.undo(),
         onRedo: () => this.redo(),
+        onToggleFactor: () => this.factorPanel.toggle(),
         onCancel: () => this.clearTool(),
       },
     });
@@ -243,6 +275,7 @@ export class Game {
           this.viewRevision = this.world.revision;
         }
         this.itemView.update(0);
+        this.machineStatus.update();
         this.refreshStock();
         this.refreshHud();
       },
@@ -259,6 +292,17 @@ export class Game {
       itemsDrawn: (): number => this.itemView.drawn,
       /** Simulation ticks run so far. Advances 30 per second when the game is running. */
       tick: (): number => this.sim.tick,
+      /** Builds through the same path as the mouse, so costs apply. Returns the id, or -1. */
+      place: (defId: string, x: number, y: number, rot = 0): number =>
+        this.builder.place(defId, x, y, rot as Rotation)?.id ?? -1,
+      setRecipe: (id: number, item: number): void => this.world.setRecipe(id, item),
+      stock: (item: number): number => this.sim.sieve.stock[item]!,
+      machineStatus: (id: number): string | null => this.sim.machines.info(id)?.status ?? null,
+      /** Opens the panel as a click on the machine would. */
+      selectMachine: (id: number): void => this.selectMachine(id),
+      panelText: (which: 'inspector' | 'factor'): string =>
+        document.getElementById(`hud-${which}`)?.innerText.replace(/\n+/g, ' | ') ?? '',
+      lights: (): number => this.machineStatus.count,
       /** Whether the background timer is a worker (survives a hidden tab) or the fallback. */
       heartbeatUsesWorker: (): boolean => this.heartbeat.usesWorker,
       /** Real time still owed to the simulation, in seconds. */
@@ -301,6 +345,7 @@ export class Game {
     this.adapter.destroy();
     this.hud.destroy();
     this.itemView.dispose();
+    this.machineStatus.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
@@ -336,6 +381,7 @@ export class Game {
       this.viewRevision = this.world.revision;
     }
     this.itemView.update(this.clock.alpha);
+    this.machineStatus.update();
 
     this.worldView.setGridVisible(this.toolActive() && this.rig.zoom <= GRID_MAX_VIEW_SIZE);
     this.renderer.render(this.scene, this.rig.camera);
@@ -379,6 +425,7 @@ export class Game {
     if (now - this.lastHudRefresh >= HUD_REFRESH_MS) {
       this.lastHudRefresh = now;
       this.refreshStock();
+      this.refreshInspector();
       // Hover text shows live values (a miner's buffer, say), so it needs re-reading
       // even when the cursor has not moved.
       this.refreshHud();
@@ -470,6 +517,7 @@ export class Game {
   }
 
   private clearTool(): void {
+    this.deselectMachine();
     this.selectedDefId = null;
     this.eraseMode = false;
     this.refreshGhost();
@@ -497,6 +545,16 @@ export class Game {
   private inspect(tile: Vec2): void {
     this.setHover({ x: tile.x + 0.5, y: tile.y + 0.5 });
 
+    // A machine opens its panel, where the recipe is chosen.
+    const building = this.world.inBounds(tile.x, tile.y) ? this.world.buildingAt(tile.x, tile.y) : null;
+    const def = building ? DEF_MAP.get(building.defId) : undefined;
+    if (building && def?.kind === 'machine' && def.machine) {
+      this.selectMachine(building.id);
+      this.hud.setHint(this.describeTile(tile));
+      return;
+    }
+    this.deselectMachine();
+
     // Clicking bare ore with no tool held mines it by hand (GDD 6.3). This is what
     // keeps a player who has spent their stone from being stuck: stone is used
     // directly to build smelters.
@@ -512,6 +570,101 @@ export class Game {
       return;
     }
     this.hud.setHint(this.describeTile(tile));
+  }
+
+  // ---------------------------------------------------------------- machine panel
+
+  private selectMachine(id: number): void {
+    const building = this.world.buildingById(id);
+    const def = building ? DEF_MAP.get(building.defId) : undefined;
+    if (!building || !def?.machine) return;
+
+    const spec = def.machine;
+    this.selectedMachineId = id;
+
+    const recipes: RecipeChoice[] = RECIPE_BOOK.recipesFor(spec.class, spec.tier).map((r) => ({
+      item: r.output,
+      name: itemName(r.output),
+      color: ITEM_MAP.get(r.output)?.color ?? 0xffffff,
+      signature: formatSignature(RECIPE_BOOK.signature(r.output)),
+      ingredients: ingredientsText(r, itemName),
+      seconds: r.seconds,
+    }));
+
+    this.hud.openInspector({
+      title: `${def.name} Mk${spec.tier}`,
+      recipes,
+      onPick: (item) => this.pickRecipe(id, item),
+    });
+    this.refreshInspector();
+  }
+
+  private deselectMachine(): void {
+    if (this.selectedMachineId === null) return;
+    this.selectedMachineId = null;
+    this.hud.closeInspector();
+  }
+
+  /** Sets what a machine makes, as an undoable step. Picking the current recipe again clears it. */
+  private pickRecipe(id: number, item: number): void {
+    const previous = this.world.recipeOf(id);
+    if (previous === item) return;
+
+    this.history.execute(new SetRecipeCommand(id, item, previous), this.builder);
+
+    const spec = DEF_MAP.get(this.world.buildingById(id)?.defId ?? '')?.machine;
+    if (item !== 0 && spec) this.lastRecipe.set(spec.class, item);
+
+    this.refreshInspector();
+    this.refreshHud();
+  }
+
+  /** Brings the open machine panel up to date, or closes it if its machine is gone. */
+  private refreshInspector(): void {
+    const id = this.selectedMachineId;
+    if (id === null) return;
+
+    const building = this.world.buildingById(id);
+    if (!building || this.world.buildingAt(building.x, building.y)?.id !== id) {
+      this.deselectMachine();
+      return;
+    }
+
+    // The recipe is read from the world so a pick shows at once; the counters come
+    // from the simulation, which catches up on its next tick. Until then they still
+    // describe the old recipe, so they are left out rather than shown wrong.
+    const recipeItem = this.world.recipeOf(id);
+    const info = this.sim.machines.info(id);
+    const current = info && (info.recipe?.output ?? 0) === recipeItem ? info : null;
+
+    let statusKind: InspectorLive['statusKind'] = 'idle';
+    let statusText = recipeItem === 0 ? '레시피를 고르세요' : '적용 중…';
+    if (current) {
+      statusText = MACHINE_STATUS_TEXT[current.status];
+      if (current.status === 'working') statusKind = 'working';
+      else if (current.status === 'waiting') statusKind = 'waiting';
+      else if (current.status === 'blocked') {
+        statusKind = 'blocked';
+        if (current.ports.length === 0) statusText = '⛔ 연결된 출력 벨트 없음';
+      }
+    }
+
+    const buffers = current?.recipe
+      ? current.recipe.inputs.map((input) => ({
+          name: itemName(input.item),
+          have: current.inputs[input.item]!,
+          cap: input.count * MACHINE_INPUT_MULTIPLE,
+        }))
+      : [];
+
+    this.hud.updateInspector({
+      statusText,
+      statusKind,
+      recipe: recipeItem,
+      buffers,
+      progress: current && current.crafting ? current.progress / current.totalTicks : 0,
+      output: current?.output ?? 0,
+    });
   }
 
   // ---------------------------------------------------------------- strokes
@@ -640,6 +793,19 @@ export class Game {
     if (!command.redo(this.builder)) return;
     if (def.kind === 'belt') this.strokeBelts.set(key, this.stroke.length);
     this.stroke.push(command);
+
+    // A new machine starts on whatever that kind was last set to, so laying down a
+    // row of smelters does not mean setting each one by hand. It is part of the same
+    // undo step as the placement.
+    if (def.kind === 'machine' && def.machine && command.building) {
+      const last = this.lastRecipe.get(def.machine.class);
+      const recipe = last ? RECIPE_BOOK.recipe(last) : undefined;
+      if (last && recipe && recipe.tier <= def.machine.tier) {
+        const set = new SetRecipeCommand(command.building.id, last, 0);
+        set.redo(this.builder);
+        this.stroke.push(set);
+      }
+    }
   }
 
   private applyErase(tile: Vec2): void {
@@ -756,7 +922,7 @@ export class Game {
       def.height,
       def.color,
       valid,
-      def.kind === 'belt' ? this.rotation : null,
+      isBeltKind(def.kind) ? this.rotation : null,
     );
   }
 
@@ -832,7 +998,16 @@ export class Game {
       if (info.stored >= MINER_BUFFER) return `${summary} — ⛔ 출력 막힘`;
       return `${summary} — ▶ 작동`;
     }
+    if (def.kind === 'machine' && def.machine) {
+      const info = this.sim.machines.info(building.id);
+      const label = `${def.name} Mk${def.machine.tier}`;
+      if (!info?.recipe) return `${label} — 레시피 없음 (클릭해서 고르기)`;
+      return `${label} · ${itemName(info.recipe.output)} — ${MACHINE_STATUS_TEXT[info.status]}`;
+    }
     if (def.kind === 'hub') return '시브 — 컨베이어로 납품한 자원이 재고가 됩니다';
+    if (def.kind === 'splitter') return `${def.name} — 세 방향으로 번갈아 내보냅니다`;
+    if (def.kind === 'tunnel-in') return `${def.name} — 앞쪽 ${TUNNEL_RANGE}칸 안의 출구로 이어집니다`;
+    if (def.kind === 'tunnel-out') return `${def.name} — 뒤쪽 입구와 이어집니다`;
     if (def.kind === 'belt') return `${def.name} · 6개/초`;
     return `${def.name} · ${def.w}×${def.h}`;
   }

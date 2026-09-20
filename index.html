@@ -40,6 +40,15 @@
           >
             ▶
           </button>
+          <button
+            class="icon-button"
+            type="button"
+            data-action="factor"
+            title="인수분해 뷰 (T)"
+            aria-label="인수분해 뷰"
+          >
+            ∏
+          </button>
           <button class="icon-button" type="button" data-action="rotate" title="건물 회전 (R)" aria-label="건물 회전">
             ↻
           </button>
@@ -53,8 +62,14 @@
       </div>
 
       <div class="hud__mid">
-        <div class="panel hud__stock" id="hud-stock"></div>
-        <div class="hud__perf" id="hud-perf"></div>
+        <div class="hud__col">
+          <div class="panel hud__stock" id="hud-stock"></div>
+          <div class="hud__perf" id="hud-perf"></div>
+        </div>
+        <div class="hud__col hud__col--right">
+          <div class="panel hud__inspector" id="hud-inspector" hidden></div>
+          <div class="panel hud__factor" id="hud-factor" hidden></div>
+        </div>
       </div>
 
       <div class="hud__bottom">

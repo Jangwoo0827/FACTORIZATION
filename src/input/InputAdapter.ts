@@ -36,6 +36,8 @@ export interface InputHandlers {
   onRotate(): void;
   onUndo(): void;
   onRedo(): void;
+  /** Show or hide the factorisation view. */
+  onToggleFactor(): void;
   /** Escape: clear the current selection. */
   onCancel(): void;
 }
@@ -292,6 +294,10 @@ export class InputAdapter {
       case 'KeyR':
         e.preventDefault();
         this.handlers.onRotate();
+        return;
+      case 'KeyT':
+        e.preventDefault();
+        this.handlers.onToggleFactor();
         return;
       case 'Escape':
         e.preventDefault();

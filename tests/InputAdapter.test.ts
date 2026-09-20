@@ -30,6 +30,7 @@ function makeHandlers(): MockedHandlers {
     onRotate: vi.fn<InputHandlers['onRotate']>(),
     onUndo: vi.fn<InputHandlers['onUndo']>(),
     onRedo: vi.fn<InputHandlers['onRedo']>(),
+    onToggleFactor: vi.fn<InputHandlers['onToggleFactor']>(),
     onCancel: vi.fn<InputHandlers['onCancel']>(),
   };
 }
@@ -197,6 +198,11 @@ describe('InputAdapter', () => {
       window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyQ' }));
       window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyE' }));
       expect(adapter.keyboardYaw()).toBe(0);
+    });
+
+    it('toggles the factorisation view with T', () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyT' }));
+      expect(handlers.onToggleFactor).toHaveBeenCalledTimes(1);
     });
 
     it('keeps R on the building, not the camera', () => {
