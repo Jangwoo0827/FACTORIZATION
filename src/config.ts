@@ -71,6 +71,10 @@ export const BELT_SPEED_MK1 = 1.5;
 export const MINER_MK1_RATE_PER_TILE = 0.125;
 /** Items a miner holds while its output belt is blocked. */
 export const MINER_BUFFER = 5;
+/** A machine holds up to this many crafts' worth of each ingredient (GDD 6.2). */
+export const MACHINE_INPUT_MULTIPLE = 2;
+/** Finished items a machine holds while its output belt is blocked (GDD 6.2: two crafts). */
+export const MACHINE_OUTPUT_CAP = 2;
 /** Hub stock ceiling per item (GDD 6.3). Deliveries past it still count toward missions. */
 export const HUB_STOCK_CAP = 9999;
 

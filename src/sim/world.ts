@@ -27,6 +27,15 @@ export class World {
   private readonly placed = new Map<number, PlacedBuilding>();
   private nextId = 1;
   private revisionCounter = 0;
+  /**
+   * What each machine is set to make, by building id. Lives here rather than in the
+   * simulation because it is the player's configuration, not simulated state: it
+   * must survive a rebuild, and later a save.
+   *
+   * An entry outlives the building's removal, so undoing the removal restores the
+   * machine already set up the way it was.
+   */
+  private readonly machineRecipes = new Map<number, number>();
 
   constructor(size: number, defs: ReadonlyMap<string, BuildingDef>) {
     this.size = size;
@@ -38,6 +47,19 @@ export class World {
 
   get buildingCount(): number {
     return this.placed.size;
+  }
+
+  /** The item a machine is set to make, or 0 if it has no recipe yet. */
+  recipeOf(buildingId: number): number {
+    return this.machineRecipes.get(buildingId) ?? 0;
+  }
+
+  /** Sets what a machine makes; 0 clears it. A change is a world change, so it bumps `revision`. */
+  setRecipe(buildingId: number, item: number): void {
+    if (this.recipeOf(buildingId) === item) return;
+    if (item === 0) this.machineRecipes.delete(buildingId);
+    else this.machineRecipes.set(buildingId, item);
+    this.revisionCounter++;
   }
 
   /**

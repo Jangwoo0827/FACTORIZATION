@@ -10,18 +10,13 @@
  * so that one miner always yields one item.
  */
 
-import { DX, DY, opposite } from '../core/dir';
 import { MINER_BUFFER, MINER_MK1_RATE_PER_TILE } from '../config';
-import { STRAIGHT, type BeltGrid } from './belts';
+import type { BeltGrid } from './belts';
+import { emitToPorts, findPorts, type Port } from './ports';
 import { Ore, ITEM_COUNT, rotatedSize, type ItemId, type PlacedBuilding } from './types';
 import type { World } from './world';
 
-export interface MinerOutput {
-  /** The belt tile this miner can feed. */
-  tile: number;
-  /** How the item enters that belt: STRAIGHT, or the side it comes in by. */
-  lat: number;
-}
+export type MinerOutput = Port;
 
 export interface MinerState {
   readonly id: number;
@@ -79,7 +74,7 @@ export class MinerSystem {
         progress: old?.progress ?? 0,
         stored: old?.stored ?? 0,
         next: old?.next ?? 0,
-        outputs: this.findOutputs(building),
+        outputs: findPorts(this.world, this.belts, building),
       });
     }
 
@@ -106,16 +101,10 @@ export class MinerSystem {
   }
 
   private emit(m: MinerState): void {
-    const n = m.outputs.length;
-    for (let j = 0; j < n; j++) {
-      const index = (m.next + j) % n;
-      const out = m.outputs[index]!;
-      if (this.belts.tryEnter(out.tile, m.item, out.lat)) {
-        m.stored--;
-        m.next = (index + 1) % n;
-        return;
-      }
-    }
+    const next = emitToPorts(this.belts, m.outputs, m.next, m.item);
+    if (next === -1) return;
+    m.stored--;
+    m.next = next;
   }
 
   private surveyOre(building: PlacedBuilding): { item: ItemId; oreTiles: number } {
@@ -138,38 +127,5 @@ export class MinerSystem {
       }
     }
     return { item: best, oreTiles: bestCount };
-  }
-
-  /** Belts around the footprint that a miner is allowed to drop onto. */
-  private findOutputs(building: PlacedBuilding): MinerOutput[] {
-    const def = this.world.defOf(building)!;
-    const { w, h } = rotatedSize(def, building.rot);
-    const size = this.world.size;
-    const outputs: MinerOutput[] = [];
-
-    const inside = (x: number, y: number): boolean =>
-      x >= building.x && x < building.x + w && y >= building.y && y < building.y + h;
-
-    for (let y = building.y; y < building.y + h; y++) {
-      for (let x = building.x; x < building.x + w; x++) {
-        for (let k = 0; k < 4; k++) {
-          const bx = x + DX[k]!;
-          const by = y + DY[k]!;
-          if (inside(bx, by) || !this.world.inBounds(bx, by)) continue;
-
-          const tile = by * size + bx;
-          const facing = this.belts.dir[tile]!;
-          if (facing < 0) continue;
-
-          // Direction from that belt back to the miner tile it touches.
-          const toMiner = opposite(k);
-          // A belt pointing at the miner would carry items into it, not away.
-          if (toMiner === facing) continue;
-
-          outputs.push({ tile, lat: toMiner === opposite(facing) ? STRAIGHT : toMiner });
-        }
-      }
-    }
-    return outputs;
   }
 }

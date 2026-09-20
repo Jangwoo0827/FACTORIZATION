@@ -3,6 +3,8 @@
  * `tests/architecture.test.ts`.
  */
 
+import type { MachineClass } from '../factor/recipeBook';
+
 export const Terrain = {
   Plain: 0,
   Water: 1,
@@ -54,12 +56,20 @@ export const ITEM_COUNT = 24;
 export type Rotation = 0 | 1 | 2 | 3;
 
 /** What a building does in the simulation. Rendering and rules key off this, not the id. */
-export type BuildingKind = 'hub' | 'belt' | 'miner' | 'passive';
+export type BuildingKind = 'hub' | 'belt' | 'miner' | 'machine' | 'passive';
+
+/** What a crafting machine is: which recipes it can run, and how fast. */
+export interface MachineSpec {
+  readonly class: MachineClass;
+  readonly tier: 1 | 2;
+}
 
 export interface BuildingDef {
   readonly id: string;
   readonly name: string;
   readonly kind: BuildingKind;
+  /** Present on `machine` buildings. */
+  readonly machine?: MachineSpec;
   /** Footprint at rotation 0, in tiles. */
   readonly w: number;
   readonly h: number;

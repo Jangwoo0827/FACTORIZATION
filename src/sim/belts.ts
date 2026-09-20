@@ -50,24 +50,28 @@ export class BeltGrid {
   readonly prev: Float32Array;
   readonly item: Uint8Array;
   readonly lat: Uint8Array;
-  /** 1 on tiles that swallow whatever reaches them (the hub). */
-  readonly sink: Uint8Array;
+  /**
+   * Id of the building that receives items handed to this tile, or -1 where nothing
+   * does. The hub and every machine's footprint are receivers; what each one does
+   * with an item, including refusing it, is up to the `offer` callback.
+   */
+  readonly receiver: Int32Array;
 
   private order: Int32Array;
   private orderLength = 0;
   private readonly stepPerTick: number;
-  private readonly deliver: (item: ItemId) => void;
+  private readonly offer: (receiverId: number, item: ItemId) => boolean;
 
   constructor(
     size: number,
     speedTilesPerSecond: number,
     ticksPerSecond: number,
-    deliver: (item: ItemId) => void,
+    offer: (receiverId: number, item: ItemId) => boolean,
   ) {
     this.size = size;
     this.tileCount = size * size;
     this.stepPerTick = speedTilesPerSecond / ticksPerSecond;
-    this.deliver = deliver;
+    this.offer = offer;
 
     this.dir = new Int8Array(this.tileCount).fill(-1);
     this.beltId = new Int32Array(this.tileCount).fill(-1);
@@ -76,7 +80,7 @@ export class BeltGrid {
     this.prev = new Float32Array(this.tileCount * SLOTS);
     this.item = new Uint8Array(this.tileCount * SLOTS);
     this.lat = new Uint8Array(this.tileCount * SLOTS);
-    this.sink = new Uint8Array(this.tileCount);
+    this.receiver = new Int32Array(this.tileCount).fill(-1);
     this.order = new Int32Array(this.tileCount);
   }
 
@@ -95,12 +99,12 @@ export class BeltGrid {
     this.count[tile] = 0;
   }
 
-  clearSinks(): void {
-    this.sink.fill(0);
+  clearReceivers(): void {
+    this.receiver.fill(-1);
   }
 
-  setSink(tile: number): void {
-    this.sink[tile] = 1;
+  setReceiver(tile: number, buildingId: number): void {
+    this.receiver[tile] = buildingId;
   }
 
   isBelt(tile: number): boolean {
@@ -120,10 +124,10 @@ export class BeltGrid {
    * and so on back along the line. Stepped the other way round, a freed slot would
    * only propagate one tile per tick and a saturated belt would lose throughput.
    *
-   * Breadth-first from the tiles that feed nothing gives exactly that order.
-   * Belts on a closed loop are never reached from a sink; they are appended at the
-   * end in tile order. A loop has no downstream-first order to find, and stepping it
-   * in any fixed order is deterministic, which is all that matters.
+   * Breadth-first from the tiles that feed nothing gives exactly that order. Belts
+   * on a closed loop are never reached that way; they are appended at the end in
+   * tile order. A loop has no downstream-first order to find, and stepping it in any
+   * fixed order is deterministic, which is all that matters.
    */
   rebuildOrder(): void {
     const size = this.size;
@@ -255,9 +259,12 @@ export class BeltGrid {
       return this.insert(next, item, carried, prevInNext, lat);
     }
 
-    if (this.sink[next]) {
-      this.deliver(item);
-      return true;
+    const receiver = this.receiver[next]!;
+    if (receiver >= 0) {
+      // Accepted or refused is the receiver's call. A refusal leaves the item at the
+      // end of this belt, which is how a machine that wants something else jams the
+      // line behind it rather than silently swallowing the wrong ingredient.
+      return this.offer(receiver, item);
     }
     return false;
   }

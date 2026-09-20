@@ -9,10 +9,13 @@
  */
 
 import { BELT_SPEED_MK1, SIM_TPS } from '../config';
+import { RECIPE_BOOK } from '../data/recipes';
+import type { RecipeBook } from '../factor/recipeBook';
 import { BeltGrid } from './belts';
+import { MachineSystem } from './machines';
 import { MinerSystem } from './miners';
 import { Sieve } from './sieve';
-import { rotatedSize, type PlacedBuilding } from './types';
+import { rotatedSize, type ItemId, type PlacedBuilding } from './types';
 import type { World } from './world';
 
 const DT = 1 / SIM_TPS;
@@ -21,17 +24,36 @@ export class Simulation {
   readonly belts: BeltGrid;
   readonly sieve = new Sieve();
   readonly miners: MinerSystem;
+  readonly machines: MachineSystem;
 
   /** Ticks simulated so far. */
   tick = 0;
 
   private seenRevision = -1;
+  /** Ids of hub buildings, which take every item they are handed. */
+  private readonly hubs = new Set<number>();
 
-  constructor(readonly world: World) {
-    this.belts = new BeltGrid(world.size, BELT_SPEED_MK1, SIM_TPS, (item) =>
-      this.sieve.receive(item),
+  constructor(
+    readonly world: World,
+    recipes: RecipeBook = RECIPE_BOOK,
+  ) {
+    this.belts = new BeltGrid(world.size, BELT_SPEED_MK1, SIM_TPS, (id, item) =>
+      this.offer(id, item),
     );
     this.miners = new MinerSystem(world, this.belts);
+    this.machines = new MachineSystem(world, this.belts, recipes);
+  }
+
+  /**
+   * What a belt's front item is handed to when it reaches a building. The hub takes
+   * everything; a machine takes only what its recipe wants; anything else refuses.
+   */
+  private offer(receiverId: number, item: ItemId): boolean {
+    if (this.hubs.has(receiverId)) {
+      this.sieve.receive(item);
+      return true;
+    }
+    return this.machines.accept(receiverId, item);
   }
 
   step(): void {
@@ -39,6 +61,7 @@ export class Simulation {
 
     this.belts.step();
     this.miners.step(DT);
+    this.machines.step();
 
     this.tick++;
     if (this.tick % SIM_TPS === 0) this.sieve.recordSecond();
@@ -59,7 +82,8 @@ export class Simulation {
       if (world.buildingIdAt(x, y) !== id) belts.clearBelt(tile);
     }
 
-    belts.clearSinks();
+    belts.clearReceivers();
+    this.hubs.clear();
     for (const building of world.buildings()) {
       const def = world.defOf(building);
       if (!def) continue;
@@ -67,16 +91,18 @@ export class Simulation {
       if (def.kind === 'belt') {
         const tile = building.y * size + building.x;
         if (belts.beltId[tile] !== building.id) belts.setBelt(tile, building.rot, building.id);
-      } else if (def.kind === 'hub') {
+      } else if (def.kind === 'hub' || def.kind === 'machine') {
+        if (def.kind === 'hub') this.hubs.add(building.id);
         const { w, h } = rotatedSize(def, building.rot);
         for (let y = building.y; y < building.y + h; y++) {
-          for (let x = building.x; x < building.x + w; x++) belts.setSink(y * size + x);
+          for (let x = building.x; x < building.x + w; x++) belts.setReceiver(y * size + x, building.id);
         }
       }
     }
 
     belts.rebuildOrder();
     this.miners.rebuild();
+    this.machines.rebuild();
     this.seenRevision = world.revision;
   }
 }
