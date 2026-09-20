@@ -22,11 +22,11 @@ function filesUnder(dir: string): string[] {
 }
 
 describe('architecture boundaries', () => {
-  it('keeps the renderer out of sim, core, data and input', () => {
+  it('keeps the renderer out of sim, core, data, input and factor', () => {
     // This boundary is not theoretical: it is what let the renderer change from
     // Phaser to three.js without touching the simulation.
     const offenders: string[] = [];
-    for (const layer of ['sim', 'core', 'data', 'input']) {
+    for (const layer of ['sim', 'core', 'data', 'input', 'factor']) {
       for (const file of filesUnder(join(SRC, layer))) {
         const source = readFileSync(file, 'utf8');
         if (/from\s+['"](three|phaser)['"]/.test(source)) offenders.push(file);
@@ -35,9 +35,9 @@ describe('architecture boundaries', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('keeps the DOM out of sim and core', () => {
+  it('keeps the DOM out of sim, core and factor', () => {
     const offenders: string[] = [];
-    for (const layer of ['sim', 'core']) {
+    for (const layer of ['sim', 'core', 'factor']) {
       for (const file of filesUnder(join(SRC, layer))) {
         const source = readFileSync(file, 'utf8');
         if (/\b(document|window)\./.test(source)) offenders.push(file);

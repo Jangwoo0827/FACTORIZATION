@@ -43,8 +43,12 @@ export const ORE_INFO: Readonly<Record<Exclude<Ore, 0>, OreInfo>> = {
  */
 export type ItemId = number;
 
-/** Highest item id + 1: the size of any per-item lookup table. */
-export const ITEM_COUNT = 8;
+/**
+ * Highest item id + 1: the size of any per-item lookup table. Raw materials are ids
+ * 1-6 (the `Ore` values) and crafted items run 7-23; `data/items.ts` lists them and
+ * a test keeps this in step.
+ */
+export const ITEM_COUNT = 24;
 
 /** Quarter turns. See `core/dir.ts` for what each value points at. */
 export type Rotation = 0 | 1 | 2 | 3;
