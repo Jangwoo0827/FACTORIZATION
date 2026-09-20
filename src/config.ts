@@ -42,8 +42,28 @@ export const CAMERA_DISTANCE = 400;
 
 /** Simulation rate (GDD 14.3). Rendering runs at display rate. */
 export const SIM_TPS = 30;
-/** Longest frame the sim will try to catch up on, so a stalled tab does not spiral. */
-export const MAX_SIM_STEPS_PER_FRAME = 5;
+/**
+ * How long one call may spend running ticks while the game is on screen. Capped so
+ * simulating never starves drawing: whatever is left stays owed for the next call.
+ */
+export const SIM_BUDGET_FOREGROUND_MS = 10;
+/** The same while the page is hidden, when nothing is being drawn and no frame is waiting. */
+export const SIM_BUDGET_HIDDEN_MS = 100;
+/**
+ * Real time that may be owed while the game is running normally before the excess
+ * is dropped. Past this the machine is simply too slow, so the game runs slower
+ * than real time rather than chasing a backlog.
+ */
+export const SIM_LIVE_BACKLOG_SECONDS = 1;
+/**
+ * Longest single stretch of away time (a frozen tab, a sleeping machine) that is
+ * caught up on return, so the factory has kept running for that long.
+ */
+export const SIM_AWAY_CATCHUP_SECONDS = 30 * 60;
+/** A gap between updates longer than this is time spent away, not lag. */
+export const SIM_AWAY_THRESHOLD_SECONDS = 0.5;
+/** Show a "catching up" notice once this much time is owed. */
+export const SIM_CATCHUP_NOTICE_SECONDS = 1.5;
 
 /** Conveyor Mk1 speed (GDD 7.1). With 4 items per tile at 0.25 spacing this carries 6 items/s. */
 export const BELT_SPEED_MK1 = 1.5;

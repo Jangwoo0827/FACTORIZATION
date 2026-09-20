@@ -19,12 +19,18 @@ import {
   DEFAULT_VIEW_SIZE,
   KEYBOARD_PAN_TILES_PER_SEC,
   MAP_SIZE,
-  MAX_SIM_STEPS_PER_FRAME,
   MINER_BUFFER,
+  SIM_AWAY_CATCHUP_SECONDS,
+  SIM_AWAY_THRESHOLD_SECONDS,
+  SIM_BUDGET_FOREGROUND_MS,
+  SIM_BUDGET_HIDDEN_MS,
+  SIM_CATCHUP_NOTICE_SECONDS,
+  SIM_LIVE_BACKLOG_SECONDS,
   SIM_TPS,
   YAW_SPEED,
   YAW_STEP,
 } from '../config';
+import { SimClock } from '../core/clock';
 import { dirFromStep } from '../core/dir';
 import { footprintOrigin, worldToTile, type Vec2 } from '../core/grid';
 import { tileLine, walkGrid } from '../core/line';
@@ -46,6 +52,7 @@ import {
 } from '../sim/types';
 import type { World } from '../sim/world';
 import { generateWorld } from '../sim/worldgen';
+import { Heartbeat } from '../runtime/heartbeat';
 import { Hud, type StockRow } from '../ui/Hud';
 import { CameraRig } from './CameraRig';
 import { GhostView } from './GhostView';
@@ -94,8 +101,22 @@ export class Game {
   private lastFrame = performance.now();
   private disposed = false;
 
-  /** Unspent real time, in seconds, waiting to become simulation ticks. */
-  private accumulator = 0;
+  /**
+   * Decides how many ticks are owed from the real clock, so the factory runs at the
+   * same speed however often (or rarely) anything calls in.
+   */
+  private readonly clock = new SimClock({
+    tickSeconds: SIM_DT,
+    liveCapSeconds: SIM_LIVE_BACKLOG_SECONDS,
+    awayCapSeconds: SIM_AWAY_CATCHUP_SECONDS,
+    awayThresholdSeconds: SIM_AWAY_THRESHOLD_SECONDS,
+  });
+  /**
+   * Keeps the simulation running while the page is hidden. Animation frames stop for
+   * a hidden tab and timers on the page slow to once a second or worse; a worker's
+   * timer does neither.
+   */
+  private readonly heartbeat = new Heartbeat(1000 / SIM_TPS, () => this.pump(performance.now()));
   /** World revision the meshes were last built from. */
   private viewRevision = -1;
 
@@ -190,6 +211,8 @@ export class Game {
     this.refreshStock();
     this.refreshHud();
 
+    this.clock.advance(performance.now());
+    this.heartbeat.start();
     this.renderer.setAnimationLoop(this.frame);
   }
 
@@ -224,6 +247,12 @@ export class Game {
       delivered: (item: number): number => this.sim.sieve.delivered[item]!,
       itemsOnBelts: (): number => this.sim.belts.totalItems(),
       itemsDrawn: (): number => this.itemView.drawn,
+      /** Simulation ticks run so far. Advances 30 per second when the game is running. */
+      tick: (): number => this.sim.tick,
+      /** Whether the background timer is a worker (survives a hidden tab) or the fallback. */
+      heartbeatUsesWorker: (): boolean => this.heartbeat.usesWorker,
+      /** Real time still owed to the simulation, in seconds. */
+      owedSeconds: (): number => this.clock.owedSeconds,
       /** The placement preview: its centre and footprint in world units, or null. */
       ghost: () => this.ghost.describe(),
       /** Exact ground point under a screen position, as the game itself computes it. */
@@ -257,6 +286,7 @@ export class Game {
     if (this.disposed) return;
     this.disposed = true;
     this.renderer.setAnimationLoop(null);
+    this.heartbeat.stop();
     window.removeEventListener('resize', this.onResize);
     this.adapter.destroy();
     this.hud.destroy();
@@ -287,7 +317,7 @@ export class Game {
       this.refreshHud();
     }
 
-    this.advanceSimulation(delta);
+    this.pump(now);
 
     // Rebuild the building meshes once per frame if anything changed, rather than
     // on every tile of a drag.
@@ -295,7 +325,7 @@ export class Game {
       this.worldView.refreshBuildings();
       this.viewRevision = this.world.revision;
     }
-    this.itemView.update(this.accumulator / SIM_DT);
+    this.itemView.update(this.clock.alpha);
 
     this.worldView.setGridVisible(this.toolActive() && this.rig.zoom <= GRID_MAX_VIEW_SIZE);
     this.renderer.render(this.scene, this.rig.camera);
@@ -304,23 +334,30 @@ export class Game {
   };
 
   /**
-   * Fixed-timestep loop: real time piles up in the accumulator and is spent in whole
-   * ticks, so the factory runs at the same speed on a 30 Hz and a 144 Hz display.
-   * The leftover fraction becomes the interpolation factor for drawing.
+   * Runs however many ticks the real clock says are owed.
+   *
+   * Called from two places: every animation frame while the game is on screen, and
+   * from the worker heartbeat all the time, which is what keeps the factory running
+   * behind other windows. Either can arrive first; both just read the clock, so
+   * whichever does the work, the same ticks run exactly once.
+   *
+   * The time spent is capped by a budget. On screen that keeps simulating from
+   * starving the next frame; anything left over stays owed. Hidden, nothing is being
+   * drawn, so a larger budget lets a backlog (a throttled or frozen tab coming back)
+   * be worked off quickly without freezing the page.
    */
-  private advanceSimulation(delta: number): void {
-    this.accumulator += delta;
+  private pump(now: number): void {
+    this.clock.advance(now);
 
+    const budget = document.hidden ? SIM_BUDGET_HIDDEN_MS : SIM_BUDGET_FOREGROUND_MS;
     const start = performance.now();
     let steps = 0;
-    while (this.accumulator >= SIM_DT && steps < MAX_SIM_STEPS_PER_FRAME) {
+    while (this.clock.hasTick()) {
       this.sim.step();
-      this.accumulator -= SIM_DT;
+      this.clock.consume();
       steps++;
+      if (performance.now() - start >= budget) break;
     }
-    // Still behind after the cap: the machine cannot keep up. Drop the backlog and
-    // run slow rather than spend every later frame trying to catch up.
-    if (this.accumulator >= SIM_DT) this.accumulator = 0;
 
     this.perfSimMs += performance.now() - start;
     this.perfSimSteps += steps;
@@ -339,13 +376,20 @@ export class Game {
 
     const elapsed = now - this.perfSince;
     if (elapsed >= PERF_REFRESH_MS) {
-      if (this.debug) {
+      const owed = this.clock.owedSeconds;
+      if (owed >= SIM_CATCHUP_NOTICE_SECONDS) {
+        // Shown to everyone, not just in debug: this is the game telling the player
+        // why the factory is briefly running fast after they come back.
+        this.hud.setPerf(`⏩ 자리를 비운 시간을 따라잡는 중 · ${Math.ceil(owed)}초 남음`);
+      } else if (this.debug) {
         const fps = (this.perfFrames * 1000) / elapsed;
         const tickMs = this.perfSimSteps > 0 ? this.perfSimMs / this.perfSimSteps : 0;
         this.hud.setPerf(
           `FPS ${fps.toFixed(0)} · 틱 ${tickMs.toFixed(2)}ms · ` +
             `벨트 ${this.sim.belts.orderedTiles().length} · 아이템 ${this.itemView.drawn}`,
         );
+      } else {
+        this.hud.setPerf('');
       }
       this.perfSince = now;
       this.perfFrames = 0;
