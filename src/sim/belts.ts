@@ -34,12 +34,34 @@ export const STRAIGHT = 4;
  */
 const EPS = 1e-3;
 
+/** What occupies a tile, as far as the belt network is concerned. */
+const NONE = 0;
+const BELT = 1;
+const SPLITTER = 2;
+
 export class BeltGrid {
   readonly size: number;
   readonly tileCount: number;
 
-  /** Direction each tile's belt carries items, or -1 where there is no belt. */
+  /** Direction each tile's belt carries items, or -1 where there is no belt (a splitter has none). */
   readonly dir: Int8Array;
+  /** NONE, BELT or SPLITTER. */
+  private readonly kind: Uint8Array;
+  /**
+   * A splitter holds one item at a time, passed on within the same tick it arrived or
+   * the next: `splitterItem` is 0 when empty, `splitterFrom` the side it came in by
+   * (never used as an exit), and `splitterNext` where the round robin starts.
+   */
+  private readonly splitterItem: Uint8Array;
+  private readonly splitterFrom: Uint8Array;
+  private readonly splitterNext: Uint8Array;
+  /**
+   * For an underpass entrance, the exit tile it hands items to; -1 otherwise. Items
+   * cross the gap in one step, so they can pass over whatever is built in between.
+   */
+  private readonly link: Int32Array;
+  /** The reverse of `link`: for an exit, the entrance feeding it; -1 otherwise. */
+  private readonly linkedFrom: Int32Array;
   /** Id of the building occupying the tile, so a replaced belt can be told from a kept one. */
   readonly beltId: Int32Array;
   /** Items currently on each tile, 0..SLOTS. */
@@ -74,6 +96,12 @@ export class BeltGrid {
     this.offer = offer;
 
     this.dir = new Int8Array(this.tileCount).fill(-1);
+    this.kind = new Uint8Array(this.tileCount);
+    this.splitterItem = new Uint8Array(this.tileCount);
+    this.splitterFrom = new Uint8Array(this.tileCount);
+    this.splitterNext = new Uint8Array(this.tileCount);
+    this.link = new Int32Array(this.tileCount).fill(-1);
+    this.linkedFrom = new Int32Array(this.tileCount).fill(-1);
     this.beltId = new Int32Array(this.tileCount).fill(-1);
     this.count = new Uint8Array(this.tileCount);
     this.pos = new Float32Array(this.tileCount * SLOTS);
@@ -88,15 +116,56 @@ export class BeltGrid {
 
   setBelt(tile: number, direction: number, buildingId: number): void {
     this.dir[tile] = direction;
+    this.kind[tile] = BELT;
     this.beltId[tile] = buildingId;
     this.count[tile] = 0;
   }
 
-  /** Removes the belt and, with it, every item that was on it. */
+  /** Puts a splitter on a tile. It has no direction: it sends items out every side but the one they came in by. */
+  setSplitter(tile: number, buildingId: number): void {
+    this.dir[tile] = -1;
+    this.kind[tile] = SPLITTER;
+    this.beltId[tile] = buildingId;
+    this.count[tile] = 0;
+    this.splitterItem[tile] = 0;
+    this.splitterNext[tile] = 0;
+  }
+
+  /** Removes whatever was on the tile and, with it, every item it held. */
   clearBelt(tile: number): void {
     this.dir[tile] = -1;
+    this.kind[tile] = NONE;
     this.beltId[tile] = -1;
     this.count[tile] = 0;
+    this.splitterItem[tile] = 0;
+  }
+
+  isSplitter(tile: number): boolean {
+    return this.kind[tile] === SPLITTER;
+  }
+
+  /** The item a splitter is holding, or 0. */
+  splitterContents(tile: number): number {
+    return this.splitterItem[tile]!;
+  }
+
+  clearLinks(): void {
+    this.link.fill(-1);
+    this.linkedFrom.fill(-1);
+  }
+
+  /** Joins an underpass entrance to its exit. */
+  setLink(entrance: number, exit: number): void {
+    this.link[entrance] = exit;
+    this.linkedFrom[exit] = entrance;
+  }
+
+  linkOf(entrance: number): number {
+    return this.link[entrance]!;
+  }
+
+  isLinkedExit(tile: number): boolean {
+    return this.linkedFrom[tile]! >= 0;
   }
 
   clearReceivers(): void {
@@ -137,7 +206,10 @@ export class BeltGrid {
     let tail = 0;
 
     for (let t = 0; t < this.tileCount; t++) {
-      if (this.dir[t]! >= 0 && this.downstreamBelt(t) === -1) {
+      const kind = this.kind[t]!;
+      const feedsNothing =
+        kind === BELT ? this.downstreamBelt(t) === -1 : kind === SPLITTER && !this.splitterHasTarget(t);
+      if (feedsNothing) {
         queue[tail++] = t;
         visited[t] = 1;
       }
@@ -151,25 +223,66 @@ export class BeltGrid {
 
       // The belt directly behind is examined first, so where a straight feeder and
       // a side feeder compete for the same slot the straight one is stepped first.
-      const back = opposite(facing);
+      const back = facing >= 0 ? opposite(facing) : 0;
       for (let j = 0; j < 4; j++) {
         const k = (back + j) % 4;
         const mx = nx + DX[k]!;
         const my = ny + DY[k]!;
         if (mx < 0 || my < 0 || mx >= size || my >= size) continue;
         const m = my * size + mx;
-        if (visited[m] || this.dir[m]! < 0) continue;
-        if (this.downstreamBelt(m) !== n) continue;
+        if (visited[m] || !this.feeds(m, n, k)) continue;
         visited[m] = 1;
         queue[tail++] = m;
+      }
+
+      // An underpass entrance is not adjacent to its exit, so the neighbour scan
+      // above cannot find it. It hands items to the exit, so it goes after it.
+      const entrance = this.linkedFrom[n]!;
+      if (entrance >= 0 && !visited[entrance]) {
+        visited[entrance] = 1;
+        queue[tail++] = entrance;
       }
     }
 
     // Anything left is on a loop.
     for (let t = 0; t < this.tileCount; t++) {
-      if (this.dir[t]! >= 0 && !visited[t]) queue[tail++] = t;
+      if (this.kind[t] !== NONE && !visited[t]) queue[tail++] = t;
     }
     this.orderLength = tail;
+  }
+
+  /**
+   * Whether tile `m` hands items to tile `n`, given that `m` is `n + DIR[k]`.
+   *
+   * A belt feeds one place. A splitter feeds every neighbour that will take from it,
+   * which is why ordering can only be approximate around one: the splitter is placed
+   * after the first of its outputs to be reached, so a later one may see its
+   * freed-up space a tick late. That costs a sliver of latency, never correctness.
+   */
+  private feeds(m: number, n: number, k: number): boolean {
+    const kind = this.kind[m]!;
+    if (kind === BELT) return this.downstreamBelt(m) === n;
+    if (kind !== SPLITTER) return false;
+    // `m` is on side k of `n`, so n is on side opposite(k) of m. A belt there that
+    // faces back at the splitter (direction k) does not take from it.
+    const nd = this.dir[n]!;
+    if (nd >= 0) return nd !== k;
+    return this.kind[n] === SPLITTER;
+  }
+
+  /** Whether a splitter has any belt or splitter next to it that could take an item. */
+  private splitterHasTarget(tile: number): boolean {
+    const x = tile % this.size;
+    const y = (tile - x) / this.size;
+    for (let k = 0; k < 4; k++) {
+      const nx = x + DX[k]!;
+      const ny = y + DY[k]!;
+      if (nx < 0 || ny < 0 || nx >= this.size || ny >= this.size) continue;
+      const next = ny * this.size + nx;
+      const nd = this.dir[next]!;
+      if (nd >= 0 ? nd !== opposite(k) : this.kind[next] === SPLITTER) return true;
+    }
+    return false;
   }
 
   /**
@@ -179,6 +292,8 @@ export class BeltGrid {
   private downstreamBelt(tile: number): number {
     const d = this.dir[tile]!;
     if (d < 0) return -1;
+    // An underpass entrance hands items to its exit, wherever that is.
+    if (this.link[tile]! >= 0) return this.link[tile]!;
     const x = tile % this.size;
     const y = (tile - x) / this.size;
     const nx = x + DX[d]!;
@@ -186,15 +301,73 @@ export class BeltGrid {
     if (nx < 0 || ny < 0 || nx >= this.size || ny >= this.size) return -1;
     const next = ny * this.size + nx;
     const nd = this.dir[next]!;
-    if (nd < 0 || nd === opposite(d)) return -1;
-    return next;
+    if (nd >= 0) return nd === opposite(d) ? -1 : next;
+    return this.kind[next] === SPLITTER ? next : -1;
   }
 
   // ------------------------------------------------------------ stepping
 
   step(): void {
     this.prev.set(this.pos);
-    for (let o = 0; o < this.orderLength; o++) this.advance(this.order[o]!);
+    for (let o = 0; o < this.orderLength; o++) {
+      const tile = this.order[o]!;
+      if (this.kind[tile] === SPLITTER) this.advanceSplitter(tile);
+      else this.advance(tile);
+    }
+  }
+
+  /**
+   * Passes a splitter's item on, trying each side in turn starting from where the
+   * last one left off, and skipping the side it arrived from.
+   *
+   * Skipping a full or refusing side is what makes a splitter useful: a blocked
+   * output does not stall the others, and when every output is blocked the item just
+   * stays, holding up whatever feeds the splitter until something clears.
+   */
+  private advanceSplitter(tile: number): void {
+    const item = this.splitterItem[tile]!;
+    if (item === 0) return;
+
+    const from = this.splitterFrom[tile]!;
+    const start = this.splitterNext[tile]!;
+    const x = tile % this.size;
+    const y = (tile - x) / this.size;
+
+    for (let j = 0; j < 4; j++) {
+      const k = (start + j) % 4;
+      if (k === from) continue;
+
+      const nx = x + DX[k]!;
+      const ny = y + DY[k]!;
+      if (nx < 0 || ny < 0 || nx >= this.size || ny >= this.size) continue;
+      const next = ny * this.size + nx;
+
+      const nd = this.dir[next]!;
+      let passed = false;
+      if (nd >= 0) {
+        // A belt facing back at the splitter carries items in, not away.
+        if (nd === opposite(k)) continue;
+        passed = this.insert(next, item, 0, 0, nd === k ? STRAIGHT : opposite(k));
+      } else if (this.kind[next] === SPLITTER) {
+        passed = this.splitterIn(next, item, opposite(k));
+      } else if (this.receiver[next]! >= 0) {
+        passed = this.offer(this.receiver[next]!, item);
+      }
+
+      if (passed) {
+        this.splitterItem[tile] = 0;
+        this.splitterNext[tile] = (k + 1) % 4;
+        return;
+      }
+    }
+  }
+
+  /** Hands an item to a splitter if it is empty. `from` is the side it arrives on. */
+  private splitterIn(tile: number, item: ItemId, from: number): boolean {
+    if (this.splitterItem[tile] !== 0) return false;
+    this.splitterItem[tile] = item;
+    this.splitterFrom[tile] = from;
+    return true;
   }
 
   private advance(tile: number): void {
@@ -243,6 +416,13 @@ export class BeltGrid {
   /** Tries to hand the front item on. Returns true if it left this tile. */
   private tryExit(tile: number, item: ItemId, carried: number, prevInNext: number): boolean {
     const d = this.dir[tile]!;
+
+    // An underpass entrance: the item leaves the tile at the far end and reappears at
+    // the exit's start. Its previous position is set to where it lands, since
+    // interpolating across the gap would draw it sliding under the ground.
+    const exit = this.link[tile]!;
+    if (exit >= 0) return this.insert(exit, item, carried, carried, STRAIGHT);
+
     const x = tile % this.size;
     const y = (tile - x) / this.size;
     const nx = x + DX[d]!;
@@ -258,6 +438,8 @@ export class BeltGrid {
       const lat = nd === d ? STRAIGHT : opposite(d);
       return this.insert(next, item, carried, prevInNext, lat);
     }
+
+    if (this.kind[next] === SPLITTER) return this.splitterIn(next, item, opposite(d));
 
     const receiver = this.receiver[next]!;
     if (receiver >= 0) {
@@ -297,6 +479,8 @@ export class BeltGrid {
    * machine). Returns false, leaving the item with the caller, if there is no room.
    */
   tryEnter(tile: number, item: ItemId, lat: number): boolean {
+    // For a splitter `lat` is the side the item arrives on, a direction 0..3.
+    if (this.kind[tile] === SPLITTER) return this.splitterIn(tile, item, lat);
     if (this.dir[tile]! < 0) return false;
     return this.insert(tile, item, 0, 0, lat);
   }
@@ -305,7 +489,7 @@ export class BeltGrid {
 
   totalItems(): number {
     let total = 0;
-    for (let t = 0; t < this.tileCount; t++) total += this.count[t]!;
+    for (let t = 0; t < this.tileCount; t++) total += this.count[t]! + (this.splitterItem[t]! !== 0 ? 1 : 0);
     return total;
   }
 

@@ -38,11 +38,18 @@ export function findPorts(world: World, belts: BeltGrid, building: PlacedBuildin
         if (inside(bx, by) || !world.inBounds(bx, by)) continue;
 
         const tile = by * size + bx;
+
+        // Direction from that tile back to the building tile it touches.
+        const toBuilding = opposite(k);
+
+        // A splitter takes an item from any side. `lat` is the side it arrives on.
+        if (belts.isSplitter(tile)) {
+          ports.push({ tile, lat: toBuilding });
+          continue;
+        }
+
         const facing = belts.dir[tile]!;
         if (facing < 0) continue;
-
-        // Direction from that belt back to the building tile it touches.
-        const toBuilding = opposite(k);
         // A belt pointing at the building carries items into it, not away, so it is
         // an input. It must not also be an output, or a machine would push its
         // product straight back onto its own feed line.

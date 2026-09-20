@@ -71,6 +71,8 @@ export const BELT_SPEED_MK1 = 1.5;
 export const MINER_MK1_RATE_PER_TILE = 0.125;
 /** Items a miner holds while its output belt is blocked. */
 export const MINER_BUFFER = 5;
+/** Farthest an underpass entrance reaches to find its exit, in tiles (GDD 7.2). */
+export const TUNNEL_RANGE = 5;
 /** A machine holds up to this many crafts' worth of each ingredient (GDD 6.2). */
 export const MACHINE_INPUT_MULTIPLE = 2;
 /** Finished items a machine holds while its output belt is blocked (GDD 6.2: two crafts). */

@@ -8,14 +8,15 @@
  * test — is picked up without having to remember to notify anyone.
  */
 
-import { BELT_SPEED_MK1, SIM_TPS } from '../config';
+import { BELT_SPEED_MK1, SIM_TPS, TUNNEL_RANGE } from '../config';
+import { DX, DY } from '../core/dir';
 import { RECIPE_BOOK } from '../data/recipes';
 import type { RecipeBook } from '../factor/recipeBook';
 import { BeltGrid } from './belts';
 import { MachineSystem } from './machines';
 import { MinerSystem } from './miners';
 import { Sieve } from './sieve';
-import { rotatedSize, type ItemId, type PlacedBuilding } from './types';
+import { isBeltKind, rotatedSize, type ItemId, type PlacedBuilding } from './types';
 import type { World } from './world';
 
 const DT = 1 / SIM_TPS;
@@ -83,14 +84,20 @@ export class Simulation {
     }
 
     belts.clearReceivers();
+    belts.clearLinks();
     this.hubs.clear();
+    const entrances: PlacedBuilding[] = [];
     for (const building of world.buildings()) {
       const def = world.defOf(building);
       if (!def) continue;
 
-      if (def.kind === 'belt') {
+      if (isBeltKind(def.kind)) {
         const tile = building.y * size + building.x;
         if (belts.beltId[tile] !== building.id) belts.setBelt(tile, building.rot, building.id);
+        if (def.kind === 'tunnel-in') entrances.push(building);
+      } else if (def.kind === 'splitter') {
+        const tile = building.y * size + building.x;
+        if (belts.beltId[tile] !== building.id) belts.setSplitter(tile, building.id);
       } else if (def.kind === 'hub' || def.kind === 'machine') {
         if (def.kind === 'hub') this.hubs.add(building.id);
         const { w, h } = rotatedSize(def, building.rot);
@@ -100,10 +107,40 @@ export class Simulation {
       }
     }
 
+    this.linkUnderpasses(entrances);
+
     belts.rebuildOrder();
     this.miners.rebuild();
     this.machines.rebuild();
     this.seenRevision = world.revision;
+  }
+
+  /**
+   * Joins each underpass entrance to the first exit facing the same way within range.
+   *
+   * An exit can serve only one entrance. Entrances are taken in the order they were
+   * built, so the pairing is deterministic; a later entrance that finds its exit
+   * already taken is left unlinked and behaves as an ordinary belt.
+   */
+  private linkUnderpasses(entrances: readonly PlacedBuilding[]): void {
+    const { world, belts } = this;
+    const size = world.size;
+
+    for (const entrance of entrances) {
+      for (let k = 1; k <= TUNNEL_RANGE; k++) {
+        const x = entrance.x + DX[entrance.rot]! * k;
+        const y = entrance.y + DY[entrance.rot]! * k;
+        if (!world.inBounds(x, y)) break;
+
+        const other = world.buildingAt(x, y);
+        if (!other || other.rot !== entrance.rot) continue;
+        if (world.defOf(other)?.kind !== 'tunnel-out') continue;
+
+        const exit = y * size + x;
+        if (!belts.isLinkedExit(exit)) belts.setLink(entrance.y * size + entrance.x, exit);
+        break;
+      }
+    }
   }
 }
 

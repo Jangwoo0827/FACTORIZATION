@@ -22,6 +22,9 @@ export const BUILDING_DEFS: readonly BuildingDef[] = [
     removable: false,
   },
   { id: 'conveyor', name: '컨베이어', kind: 'belt', w: 1, h: 1, color: 0x6f7d8b, height: 0.14, needsOre: false },
+  { id: 'splitter', name: '분배기', kind: 'splitter', w: 1, h: 1, color: 0x58c2c8, height: 0.34, needsOre: false },
+  { id: 'tunnel-in', name: '언더패스 입구', kind: 'tunnel-in', w: 1, h: 1, color: 0x4a5561, height: 0.2, needsOre: false },
+  { id: 'tunnel-out', name: '언더패스 출구', kind: 'tunnel-out', w: 1, h: 1, color: 0x4a5561, height: 0.2, needsOre: false },
   { id: 'miner', name: '채굴기', kind: 'miner', w: 2, h: 2, color: 0xe0a63c, height: 1.3, needsOre: true },
   {
     id: 'smelter',

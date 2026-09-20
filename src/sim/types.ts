@@ -56,7 +56,20 @@ export const ITEM_COUNT = 24;
 export type Rotation = 0 | 1 | 2 | 3;
 
 /** What a building does in the simulation. Rendering and rules key off this, not the id. */
-export type BuildingKind = 'hub' | 'belt' | 'miner' | 'machine' | 'passive';
+export type BuildingKind =
+  | 'hub'
+  | 'belt'
+  | 'splitter'
+  | 'tunnel-in'
+  | 'tunnel-out'
+  | 'miner'
+  | 'machine'
+  | 'passive';
+
+/** Kinds that carry items along a direction the way a conveyor does. */
+export function isBeltKind(kind: BuildingKind): boolean {
+  return kind === 'belt' || kind === 'tunnel-in' || kind === 'tunnel-out';
+}
 
 /** What a crafting machine is: which recipes it can run, and how fast. */
 export interface MachineSpec {
