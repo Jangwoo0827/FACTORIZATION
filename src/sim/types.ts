@@ -64,6 +64,8 @@ export type BuildingKind =
   | 'tunnel-out'
   | 'miner'
   | 'machine'
+  | 'generator'
+  | 'pole'
   | 'passive';
 
 /** An amount of one item: a price, or one line of a recipe. */
@@ -83,12 +85,41 @@ export interface MachineSpec {
   readonly tier: 1 | 2;
 }
 
+/** How a miner digs: which tier it is and how much ore each tile under it yields per second. */
+export interface MinerSpec {
+  readonly tier: 1 | 2;
+  readonly ratePerTile: number;
+}
+
+/** A generator burns one fuel item at a time and gives `output` power while it burns (GDD 8). */
+export interface GeneratorSpec {
+  readonly output: number;
+  readonly fuel: ItemId;
+  readonly burnSeconds: number;
+}
+
+/** A power pole joins everything within `range` tiles to one grid (GDD 8). */
+export interface PoleSpec {
+  readonly range: number;
+}
+
 export interface BuildingDef {
   readonly id: string;
   readonly name: string;
   readonly kind: BuildingKind;
   /** Present on `machine` buildings. */
   readonly machine?: MachineSpec;
+  /** Present on `miner` buildings. */
+  readonly miner?: MinerSpec;
+  /** Present on `generator` buildings. */
+  readonly generator?: GeneratorSpec;
+  /** Present on `pole` buildings. */
+  readonly pole?: PoleSpec;
+  /**
+   * Power this building consumes while placed, in PU. Absent means it needs none, which
+   * is every Mk1 building (GDD 8: physics first, power as the upgrade).
+   */
+  readonly draw?: number;
   /** What it costs to build, taken from the hub's stock. Free when absent. */
   readonly cost?: readonly Cost[];
   /** Footprint at rotation 0, in tiles. */

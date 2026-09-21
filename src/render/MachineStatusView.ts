@@ -3,8 +3,8 @@
  *
  * The diagnostic that matters most in a factory game is "why is that machine not
  * working?" Green is crafting, amber is waiting for an ingredient, red is blocked
- * with nowhere to put its product, and grey has no recipe. A whole factory reads at a
- * glance, and the amber and red ones are where the problem is.
+ * with nowhere to put its product, grey has no recipe, and blue has no power. A whole
+ * factory reads at a glance, and the amber, red and blue ones are where the problem is.
  */
 
 import {
@@ -29,6 +29,7 @@ const STATUS_COLOUR: Readonly<Record<MachineStatus, number>> = {
   waiting: 0xe8c34a,
   blocked: 0xe4635c,
   'no-recipe': 0x7d8794,
+  'no-power': 0x4f9bff,
 };
 
 interface Light {

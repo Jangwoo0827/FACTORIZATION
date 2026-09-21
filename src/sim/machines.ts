@@ -21,6 +21,7 @@ import { machineSpeed } from '../data/recipes';
 import type { RecipeBook, RecipeDef } from '../factor/recipeBook';
 import type { BeltGrid } from './belts';
 import { emitToPorts, findPorts, type Port } from './ports';
+import { POWER_FULL, type PowerSystem } from './power';
 import { ITEM_COUNT, type ItemId, type MachineSpec } from './types';
 import type { World } from './world';
 
@@ -31,8 +32,10 @@ import type { World } from './world';
  *  - `working`: crafting
  *  - `waiting`: idle for want of an ingredient
  *  - `blocked`: finished goods have nowhere to go
+ *  - `no-power`: draws power and is getting none, so it is not doing anything at all.
+ *    A brownout that is only slowing it down still reads `working`.
  */
-export type MachineStatus = 'no-recipe' | 'working' | 'waiting' | 'blocked';
+export type MachineStatus = 'no-recipe' | 'working' | 'waiting' | 'blocked' | 'no-power';
 
 export interface MachineState {
   readonly id: number;
@@ -47,6 +50,14 @@ export interface MachineState {
   crafting: boolean;
   /** Ticks into the current craft. */
   progress: number;
+  /** How much of the power it asks for it is getting, 0..POWER_FULL. Always full for Mk1. */
+  level: number;
+  /**
+   * Power earned toward the next tick of work. Each tick adds `level`; a full
+   * `POWER_FULL` buys a tick. At full power that is exactly one tick of work per tick,
+   * and at 60% it is three ticks of work in every five, with no float to drift.
+   */
+  credit: number;
   /** Finished items waiting for a belt with room. */
   output: number;
   status: MachineStatus;
@@ -62,6 +73,7 @@ export class MachineSystem {
     private readonly world: World,
     private readonly belts: BeltGrid,
     private readonly recipes: RecipeBook,
+    private readonly power: PowerSystem,
   ) {}
 
   get count(): number {
@@ -95,6 +107,7 @@ export class MachineSystem {
         kept.inputs.set(old.inputs);
         kept.crafting = old.crafting;
         kept.progress = old.progress;
+        kept.credit = old.credit;
         kept.output = old.output;
         kept.next = old.next;
         next.set(building.id, kept);
@@ -126,7 +139,14 @@ export class MachineSystem {
     for (const m of this.machines.values()) {
       const recipe = m.recipe;
 
-      if (recipe) {
+      m.level = this.power.levelOf(m.id);
+      m.credit += m.level;
+      // Whether this tick is one the machine gets to work in. Unpowered, no credit
+      // arrives; slowed, a tick's worth arrives only some of the time.
+      const works = m.credit >= POWER_FULL;
+      if (works) m.credit -= POWER_FULL;
+
+      if (recipe && works) {
         if (m.crafting) {
           m.progress++;
           if (m.progress >= m.totalTicks) {
@@ -148,11 +168,13 @@ export class MachineSystem {
 
       m.status = !recipe
         ? 'no-recipe'
-        : m.crafting
-          ? 'working'
-          : m.output >= MACHINE_OUTPUT_CAP
-            ? 'blocked'
-            : 'waiting';
+        : m.level === 0
+          ? 'no-power'
+          : m.crafting
+            ? 'working'
+            : m.output >= MACHINE_OUTPUT_CAP
+              ? 'blocked'
+              : 'waiting';
     }
   }
 
@@ -197,6 +219,8 @@ export class MachineSystem {
       totalTicks: recipe ? Math.max(1, Math.round((recipe.seconds * SIM_TPS) / speed)) : 0,
       crafting: false,
       progress: 0,
+      level: POWER_FULL,
+      credit: 0,
       output: 0,
       status: recipe ? 'waiting' : 'no-recipe',
       next: 0,

@@ -69,6 +69,8 @@ export const SIM_CATCHUP_NOTICE_SECONDS = 1.5;
 export const BELT_SPEED_MK1 = 1.5;
 /** Ore a Mk1 miner yields per second for each ore tile under it (GDD 6.1: 4 tiles = 0.5/s). */
 export const MINER_MK1_RATE_PER_TILE = 0.125;
+/** The same for a Mk2 miner (GDD 6.1: 4 tiles = 1.0/s). */
+export const MINER_MK2_RATE_PER_TILE = 0.25;
 /** Items a miner holds while its output belt is blocked. */
 export const MINER_BUFFER = 5;
 /** Farthest an underpass entrance reaches to find its exit, in tiles (GDD 7.2). */
@@ -77,6 +79,8 @@ export const TUNNEL_RANGE = 5;
 export const MACHINE_INPUT_MULTIPLE = 2;
 /** Finished items a machine holds while its output belt is blocked (GDD 6.2: two crafts). */
 export const MACHINE_OUTPUT_CAP = 2;
+/** Fuel items a generator holds beyond the one it is burning (GDD 8). */
+export const GENERATOR_FUEL_BUFFER = 2;
 /** Hub stock ceiling per item (GDD 6.3). Deliveries past it still count toward missions. */
 export const HUB_STOCK_CAP = 9999;
 

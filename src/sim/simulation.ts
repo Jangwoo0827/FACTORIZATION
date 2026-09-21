@@ -15,6 +15,7 @@ import type { RecipeBook } from '../factor/recipeBook';
 import { BeltGrid } from './belts';
 import { MachineSystem } from './machines';
 import { MinerSystem } from './miners';
+import { PowerSystem } from './power';
 import { Sieve } from './sieve';
 import { isBeltKind, rotatedSize, type ItemId, type PlacedBuilding } from './types';
 import type { World } from './world';
@@ -24,6 +25,7 @@ const DT = 1 / SIM_TPS;
 export class Simulation {
   readonly belts: BeltGrid;
   readonly sieve = new Sieve();
+  readonly power: PowerSystem;
   readonly miners: MinerSystem;
   readonly machines: MachineSystem;
 
@@ -41,25 +43,30 @@ export class Simulation {
     this.belts = new BeltGrid(world.size, BELT_SPEED_MK1, SIM_TPS, (id, item) =>
       this.offer(id, item),
     );
-    this.miners = new MinerSystem(world, this.belts);
-    this.machines = new MachineSystem(world, this.belts, recipes);
+    this.power = new PowerSystem(world);
+    this.miners = new MinerSystem(world, this.belts, this.power);
+    this.machines = new MachineSystem(world, this.belts, recipes, this.power);
   }
 
   /**
    * What a belt's front item is handed to when it reaches a building. The hub takes
-   * everything; a machine takes only what its recipe wants; anything else refuses.
+   * everything; a machine takes only what its recipe wants; a generator takes only its
+   * fuel; anything else refuses.
    */
   private offer(receiverId: number, item: ItemId): boolean {
     if (this.hubs.has(receiverId)) {
       this.sieve.receive(item);
       return true;
     }
-    return this.machines.accept(receiverId, item);
+    return this.machines.accept(receiverId, item) || this.power.accept(receiverId, item);
   }
 
   step(): void {
     if (this.world.revision !== this.seenRevision) this.sync();
 
+    // Power first: machines read this tick's level, so a generator that just lit
+    // powers them in the same tick rather than one tick late.
+    this.power.step();
     this.belts.step();
     this.miners.step(DT);
     this.machines.step();
@@ -98,7 +105,7 @@ export class Simulation {
       } else if (def.kind === 'splitter') {
         const tile = building.y * size + building.x;
         if (belts.beltId[tile] !== building.id) belts.setSplitter(tile, building.id);
-      } else if (def.kind === 'hub' || def.kind === 'machine') {
+      } else if (def.kind === 'hub' || def.kind === 'machine' || def.kind === 'generator') {
         if (def.kind === 'hub') this.hubs.add(building.id);
         const { w, h } = rotatedSize(def, building.rot);
         for (let y = building.y; y < building.y + h; y++) {
@@ -110,6 +117,7 @@ export class Simulation {
     this.linkUnderpasses(entrances);
 
     belts.rebuildOrder();
+    this.power.rebuild();
     this.miners.rebuild();
     this.machines.rebuild();
     this.seenRevision = world.revision;

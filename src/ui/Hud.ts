@@ -8,6 +8,7 @@
  */
 
 import type { Vec2 } from '../core/grid';
+import { displayName } from '../data/buildings';
 import { itemName } from '../data/items';
 import type { BuildingDef, Rotation } from '../sim/types';
 
@@ -346,7 +347,7 @@ export class Hud {
       `<span class="tool__swatch" style="background:${hex(def.color)}"></span>` +
       `<span class="tool__name"></span>` +
       `<span class="tool__size"></span>`;
-    button.querySelector('.tool__name')!.textContent = def.name;
+    button.querySelector('.tool__name')!.textContent = displayName(def);
     const price = (def.cost ?? []).map((c) => `${itemName(c.item)} ${c.count}`).join(' · ');
     button.querySelector('.tool__size')!.textContent = price ? `${def.w}×${def.h} · ${price}` : `${def.w}×${def.h}`;
     button.title = price ? `건설비: ${price}` : '무료';

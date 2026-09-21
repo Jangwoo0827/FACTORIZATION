@@ -17,6 +17,7 @@ import {
 import {
   DEFAULT_SEED,
   DEFAULT_VIEW_SIZE,
+  GENERATOR_FUEL_BUFFER,
   KEYBOARD_PAN_TILES_PER_SEC,
   MACHINE_INPUT_MULTIPLE,
   MAP_SIZE,
@@ -36,7 +37,7 @@ import { SimClock } from '../core/clock';
 import { dirFromStep } from '../core/dir';
 import { footprintOrigin, worldToTile, type Vec2 } from '../core/grid';
 import { tileLine, walkGrid } from '../core/line';
-import { BUILDABLE_DEFS, DEF_MAP } from '../data/buildings';
+import { BUILDABLE_DEFS, DEF_MAP, displayName } from '../data/buildings';
 import { STARTING_STOCK } from '../data/economy';
 import { ITEM_DEFS, ITEM_MAP, Item, itemName } from '../data/items';
 import { RECIPE_BOOK, ingredientsText } from '../data/recipes';
@@ -50,6 +51,7 @@ import {
   type Command,
 } from '../input/commands';
 import { Builder } from '../sim/builder';
+import { POWER_FULL } from '../sim/power';
 import { InputAdapter } from '../input/InputAdapter';
 import { buildRings, createBenchWorld, fillBelts } from '../sim/bench';
 import { Simulation, placeHub } from '../sim/simulation';
@@ -92,6 +94,7 @@ const MACHINE_STATUS_TEXT: Readonly<Record<MachineStatus, string>> = {
   working: '▶ 작동',
   waiting: '⏸ 재료 대기',
   blocked: '⛔ 출력 막힘',
+  'no-power': '⚡ 전력 없음',
 };
 
 export class Game {
@@ -297,6 +300,17 @@ export class Game {
         this.builder.place(defId, x, y, rot as Rotation)?.id ?? -1,
       setRecipe: (id: number, item: number): void => this.world.setRecipe(id, item),
       stock: (item: number): number => this.sim.sieve.stock[item]!,
+      /** Adds to the hub's stock without counting as delivered, like the starting supplies. */
+      give: (item: number, count: number): void => this.sim.sieve.addStock(item, count),
+      /** Hands a generator one fuel item, as a belt would. Returns whether it was taken. */
+      fuel: (id: number, item: number): boolean => this.sim.power.accept(id, item),
+      /** Power totals across every grid. */
+      power: () => this.sim.power.summary(),
+      /** What hovering a building would say. */
+      describe: (id: number): string => {
+        const b = this.world.buildingById(id);
+        return b ? this.describeBuilding(b) : '';
+      },
       machineStatus: (id: number): string | null => this.sim.machines.info(id)?.status ?? null,
       /** Opens the panel as a click on the machine would. */
       selectMachine: (id: number): void => this.selectMachine(id),
@@ -592,7 +606,7 @@ export class Game {
     }));
 
     this.hud.openInspector({
-      title: `${def.name} Mk${spec.tier}`,
+      title: displayName(def),
       recipes,
       onPick: (item) => this.pickRecipe(id, item),
     });
@@ -641,6 +655,13 @@ export class Game {
     let statusText = recipeItem === 0 ? '레시피를 고르세요' : '적용 중…';
     if (current) {
       statusText = MACHINE_STATUS_TEXT[current.status];
+      const power = this.powerNote(id);
+      if (current.status === 'no-power') {
+        statusKind = 'blocked';
+        statusText = power;
+      } else if (power) {
+        statusText = `${statusText} · ${power}`;
+      }
       if (current.status === 'working') statusKind = 'working';
       else if (current.status === 'waiting') statusKind = 'waiting';
       else if (current.status === 'blocked') {
@@ -993,16 +1014,40 @@ export class Game {
       // Not derived until the simulation's first tick after placement.
       if (!info) return def.name;
       const ore = ORE_INFO[info.item as Exclude<Ore, 0>];
-      const summary = `${ore.name} ${def.name} · ${info.rate.toFixed(3)}/s (광석 ${info.oreTiles}/${def.w * def.h}칸)`;
+      const rate = (info.rate * info.level) / POWER_FULL;
+      const summary = `${ore.name} ${displayName(def)} · ${rate.toFixed(3)}/s (광석 ${info.oreTiles}/${def.w * def.h}칸)`;
+      const power = this.powerNote(building.id);
+      if (info.level === 0) return `${summary} — ${power}`;
+      if (power) return `${summary} — ${power}`;
       if (info.outputs.length === 0) return `${summary} — ⛔ 연결된 컨베이어 없음`;
       if (info.stored >= MINER_BUFFER) return `${summary} — ⛔ 출력 막힘`;
       return `${summary} — ▶ 작동`;
     }
     if (def.kind === 'machine' && def.machine) {
       const info = this.sim.machines.info(building.id);
-      const label = `${def.name} Mk${def.machine.tier}`;
+      const label = displayName(def);
       if (!info?.recipe) return `${label} — 레시피 없음 (클릭해서 고르기)`;
-      return `${label} · ${itemName(info.recipe.output)} — ${MACHINE_STATUS_TEXT[info.status]}`;
+      const power = this.powerNote(building.id);
+      const status = info.status === 'no-power' ? power : MACHINE_STATUS_TEXT[info.status];
+      return `${label} · ${itemName(info.recipe.output)} — ${status}${power && info.status !== 'no-power' ? ` · ${power}` : ''}`;
+    }
+    if (def.kind === 'generator' && def.generator) {
+      const gen = this.sim.power.generator(building.id);
+      const head = `${def.name} · +${def.generator.output} PU (${itemName(def.generator.fuel)} ${def.generator.burnSeconds}초에 1개)`;
+      if (!gen) return head;
+      // Only "not wired" matters here: a grid that is short of power is the generator's
+      // doing, not its problem.
+      if (this.sim.power.infoOf(building.id)?.connected === false) {
+        return `${head} — ⚡ 전력망에 연결되지 않음 (기둥 범위 밖)`;
+      }
+      if (gen.burning) return `${head} — 🔥 발전 중 (연료 ${gen.stored}/${GENERATOR_FUEL_BUFFER})`;
+      return `${head} — ⛔ 연료(${itemName(def.generator.fuel)}) 없음`;
+    }
+    if (def.kind === 'pole' && def.pole) {
+      const grid = this.sim.power.gridOfPole(building.id);
+      const head = `${def.name} · 범위 ${def.pole.range}칸`;
+      if (!grid) return head;
+      return `${head} — 전력망: 공급 ${grid.supply} / 수요 ${grid.demand} PU (${Math.round(grid.level / 10)}%)`;
     }
     if (def.kind === 'hub') return '시브 — 컨베이어로 납품한 자원이 재고가 됩니다';
     if (def.kind === 'splitter') return `${def.name} — 세 방향으로 번갈아 내보냅니다`;
@@ -1010,6 +1055,19 @@ export class Game {
     if (def.kind === 'tunnel-out') return `${def.name} — 뒤쪽 입구와 이어집니다`;
     if (def.kind === 'belt') return `${def.name} · 6개/초`;
     return `${def.name} · ${def.w}×${def.h}`;
+  }
+
+  /**
+   * Why a power-drawing building is not getting all it asks for, or an empty string if
+   * it is (or needs none). Machines, miners and generators all read this the same way.
+   */
+  private powerNote(id: number): string {
+    const power = this.sim.power.infoOf(id);
+    if (!power) return '';
+    if (!power.connected) return '⚡ 전력망에 연결되지 않음 (기둥 범위 밖)';
+    if (power.level === 0) return '⚡ 전력 없음 (발전량 0)';
+    if (power.level < POWER_FULL) return `⚡ 전력 부족 ${Math.round(power.level / 10)}%`;
+    return '';
   }
 
   private refreshHud(): void {

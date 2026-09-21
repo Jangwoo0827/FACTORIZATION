@@ -13,6 +13,7 @@
 import { MINER_BUFFER, MINER_MK1_RATE_PER_TILE } from '../config';
 import type { BeltGrid } from './belts';
 import { emitToPorts, findPorts, type Port } from './ports';
+import { POWER_FULL, type PowerSystem } from './power';
 import { Ore, ITEM_COUNT, rotatedSize, type ItemId, type PlacedBuilding } from './types';
 import type { World } from './world';
 
@@ -23,8 +24,10 @@ export interface MinerState {
   item: ItemId;
   /** Ore tiles under the footprint that are the mined ore. */
   oreTiles: number;
-  /** Items per second. */
+  /** Items per second at full power. */
   rate: number;
+  /** How much of the power it asks for it is getting, 0..POWER_FULL. Always full for Mk1. */
+  level: number;
   /** Fraction of the next item already produced. */
   progress: number;
   /** Items produced and waiting for a belt with room. */
@@ -40,6 +43,7 @@ export class MinerSystem {
   constructor(
     private readonly world: World,
     private readonly belts: BeltGrid,
+    private readonly power: PowerSystem,
   ) {}
 
   get count(): number {
@@ -70,7 +74,8 @@ export class MinerSystem {
         id: building.id,
         item,
         oreTiles,
-        rate: oreTiles * MINER_MK1_RATE_PER_TILE,
+        rate: oreTiles * (def.miner?.ratePerTile ?? MINER_MK1_RATE_PER_TILE),
+        level: POWER_FULL,
         progress: old?.progress ?? 0,
         stored: old?.stored ?? 0,
         next: old?.next ?? 0,
@@ -83,8 +88,10 @@ export class MinerSystem {
 
   step(dt: number): void {
     for (const m of this.miners.values()) {
+      // A brownout slows a miner in proportion; no power at all stops it.
+      m.level = this.power.levelOf(m.id);
       if (m.stored < MINER_BUFFER) {
-        m.progress += m.rate * dt;
+        m.progress += (m.rate * dt * m.level) / POWER_FULL;
         const whole = Math.floor(m.progress);
         if (whole > 0) {
           const take = Math.min(whole, MINER_BUFFER - m.stored);

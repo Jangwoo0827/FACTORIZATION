@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { mulberry32 } from '../src/core/rng';
 import { BUILDING_DEFS, BUILDABLE_DEFS } from '../src/data/buildings';
 import { STARTING_STOCK } from '../src/data/economy';
-import { ITEM_MAP, Item } from '../src/data/items';
+import { ITEM_DEFS, ITEM_MAP, Item } from '../src/data/items';
+import { RECIPE_BOOK } from '../src/data/recipes';
 import {
   CompositeCommand,
   History,
@@ -76,12 +77,24 @@ describe('what things cost', () => {
     expect(sieve.canAfford(afford)).toBe(true);
   });
 
-  it('only asks for things the player can get without already having them', () => {
-    // Plates cannot be mined; if a starting building cost something outside the
-    // starting stock and not obtainable early, the game could not begin.
-    const obtainable = new Set<number>([Item.IronPlate, Item.CopperPlate, Item.Stone]);
+  it('only asks for things that can be obtained: starting stock, or something with a recipe', () => {
+    // Plates cannot be mined, so the starting stock is what makes the first buildings
+    // possible. Anything beyond it must be craftable, or a building could never be built.
+    const obtainable = new Set<number>(STARTING_STOCK.map((s) => s.item));
     for (const def of BUILDABLE_DEFS) {
-      for (const { item } of def.cost!) expect(obtainable.has(item), `${def.id} needs ${item}`).toBe(true);
+      for (const { item } of def.cost!) {
+        const craftable = RECIPE_BOOK.recipe(item) !== undefined;
+        expect(obtainable.has(item) || craftable, `${def.id} needs ${item}`).toBe(true);
+      }
+    }
+  });
+
+  it('keeps the buildings a new game starts with within the starting stock', () => {
+    const starting = new Set<number>(STARTING_STOCK.map((s) => s.item));
+    for (const id of ['conveyor', 'miner', 'smelter', 'assembler', 'splitter', 'tunnel-in', 'tunnel-out', 'pole']) {
+      for (const { item } of BUILDING_DEFS.find((d) => d.id === id)!.cost!) {
+        expect(starting.has(item), `${id} needs ${item}`).toBe(true);
+      }
     }
   });
 });
@@ -352,17 +365,33 @@ describe('hand mining', () => {
 });
 
 describe('conservation of materials', () => {
-  // Whatever mix of building, demolishing, undoing and redoing the player does, the
-  // stock plus the price of everything standing on the map must equal what they
-  // started with. If materials could appear or vanish anywhere in that machinery,
-  // this is where it would show.
-  it('holds through thousands of random operations', () => {
-    const rng = mulberry32(20260919);
-    const { world, sieve, builder, history } = setup();
+  interface Tally {
+    placed: number;
+    removed: number;
+    undone: number;
+    redone: number;
+    blocked: number;
+    refused: number;
+  }
+
+  /**
+   * Whatever mix of building, demolishing, undoing and redoing the player does, the
+   * stock plus the price of everything standing on the map must equal what they
+   * started with. If materials could appear or vanish anywhere in that machinery,
+   * this is where it would show.
+   */
+  function fuzz(opts: {
+    defs: readonly string[];
+    stock: readonly { item: number; count: number }[];
+    steps: number;
+    seed: number;
+  }): Tally {
+    const rng = mulberry32(opts.seed);
+    const { world, sieve, builder, history } = setup(opts.stock);
     const start = Int32Array.from(sieve.stock);
     for (let x = 0; x < 24; x++) for (let y = 0; y < 24; y++) world.setOre(x, y, Ore.Iron);
 
-    const defs = ['conveyor', 'splitter', 'tunnel-in', 'miner', 'smelter', 'assembler'];
+    const defs = opts.defs;
 
     const standing = (): Int32Array => {
       const total = new Int32Array(ITEM_COUNT);
@@ -380,8 +409,8 @@ describe('conservation of materials', () => {
       }
     };
 
-    const tally = { placed: 0, removed: 0, undone: 0, redone: 0, blocked: 0, refused: 0 };
-    for (let step = 0; step < 4000; step++) {
+    const tally: Tally = { placed: 0, removed: 0, undone: 0, redone: 0, blocked: 0, refused: 0 };
+    for (let step = 0; step < opts.steps; step++) {
       const roll = rng();
       if (roll < 0.45) {
         const id = defs[Math.floor(rng() * defs.length)]!;
@@ -411,6 +440,18 @@ describe('conservation of materials', () => {
       }
       check(`step ${step}`);
     }
+    return tally;
+  }
+
+  // Generous timeouts: this checks every item after every one of thousands of steps,
+  // which is slow when the whole suite is running in parallel.
+  it('holds through thousands of random operations', () => {
+    const tally = fuzz({
+      defs: ['conveyor', 'splitter', 'tunnel-in', 'miner', 'smelter', 'assembler'],
+      stock: STARTING_STOCK,
+      steps: 4000,
+      seed: 20260919,
+    });
 
     // A run that never exercised the interesting paths would prove nothing.
     expect(tally.placed).toBeGreaterThan(200);
@@ -419,5 +460,16 @@ describe('conservation of materials', () => {
     expect(tally.redone).toBeGreaterThan(50);
     expect(tally.refused).toBeGreaterThan(20);
     expect(tally.blocked).toBeGreaterThan(0);
-  });
+  }, 60_000);
+
+  it('holds for every building, including the ones priced in crafted goods', () => {
+    // Plenty of everything, so the Mk2 machines, generators and poles actually get built.
+    const rich = ITEM_DEFS.map((d) => ({ item: d.id, count: 600 }));
+    const tally = fuzz({ defs: BUILDABLE_DEFS.map((d) => d.id), stock: rich, steps: 3000, seed: 7 });
+
+    expect(tally.placed).toBeGreaterThan(200);
+    expect(tally.removed).toBeGreaterThan(100);
+    expect(tally.undone).toBeGreaterThan(100);
+    expect(tally.redone).toBeGreaterThan(50);
+  }, 60_000);
 });
