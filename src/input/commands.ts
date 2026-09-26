@@ -65,7 +65,7 @@ export class RemoveCommand implements Command {
   }
 }
 
-/** Changes what a machine makes. Free, and always possible. */
+/** Changes what a machine makes. Free; refused only for a recipe that is not unlocked yet. */
 export class SetRecipeCommand implements Command {
   readonly label = 'recipe';
 
@@ -76,13 +76,11 @@ export class SetRecipeCommand implements Command {
   ) {}
 
   redo(builder: Builder): boolean {
-    builder.world.setRecipe(this.buildingId, this.next);
-    return true;
+    return builder.setRecipe(this.buildingId, this.next);
   }
 
   undo(builder: Builder): boolean {
-    builder.world.setRecipe(this.buildingId, this.previous);
-    return true;
+    return builder.setRecipe(this.buildingId, this.previous);
   }
 }
 

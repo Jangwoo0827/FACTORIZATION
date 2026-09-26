@@ -41,7 +41,8 @@ import { BUILDABLE_DEFS, DEF_MAP, displayName } from '../data/buildings';
 import { STARTING_STOCK } from '../data/economy';
 import { ITEM_DEFS, ITEM_MAP, Item, itemName } from '../data/items';
 import { RECIPE_BOOK, ingredientsText } from '../data/recipes';
-import { formatSignature } from '../factor/signature';
+import { newPrimesOf } from '../data/seals';
+import { formatSignature, PRIMES } from '../factor/signature';
 import {
   CompositeCommand,
   History,
@@ -67,12 +68,14 @@ import {
   type BuildingDef,
   type PlacedBuilding,
   type Rotation,
+  type SealDef,
 } from '../sim/types';
 import type { World } from '../sim/world';
 import { generateWorld } from '../sim/worldgen';
 import { Heartbeat } from '../runtime/heartbeat';
 import { FactorPanel } from '../ui/FactorPanel';
 import { Hud, type InspectorLive, type RecipeChoice, type StockRow } from '../ui/Hud';
+import { SealPanel } from '../ui/SealPanel';
 import { CameraRig } from './CameraRig';
 import { GhostView } from './GhostView';
 import { ItemView } from './ItemView';
@@ -109,6 +112,7 @@ export class Game {
   private readonly itemView: ItemView;
   private readonly machineStatus: MachineStatusView;
   private readonly factorPanel: FactorPanel;
+  private readonly sealPanel: SealPanel;
   private readonly ghost: GhostView;
   private readonly adapter: InputAdapter;
   private readonly hud: Hud;
@@ -183,7 +187,7 @@ export class Game {
     this.world = bench ? createBenchWorld(MAP_SIZE) : generateWorld(MAP_SIZE, DEFAULT_SEED, DEF_MAP);
     placeHub(this.world);
     this.sim = new Simulation(this.world);
-    this.builder = new Builder(this.world, this.sim.sieve);
+    this.builder = new Builder(this.world, this.sim.sieve, this.sim.progress);
     if (!bench) {
       for (const { item, count } of STARTING_STOCK) this.sim.sieve.addStock(item, count);
     }
@@ -196,7 +200,9 @@ export class Game {
     this.itemView = new ItemView(this.scene, this.sim);
     this.machineStatus = new MachineStatusView(this.scene, this.sim);
     this.factorPanel = new FactorPanel(document.getElementById('hud-factor')!, Item.GateComponent);
+    this.sealPanel = new SealPanel(document.getElementById('hud-seal')!);
     this.ghost = new GhostView(this.scene);
+    this.sim.progress.onComplete = (seal) => this.announceSeal(seal);
 
     this.rig.lookAtTile(MAP_SIZE / 2, MAP_SIZE / 2);
 
@@ -302,6 +308,16 @@ export class Game {
       stock: (item: number): number => this.sim.sieve.stock[item]!,
       /** Adds to the hub's stock without counting as delivered, like the starting supplies. */
       give: (item: number, count: number): void => this.sim.sieve.addStock(item, count),
+      /** Delivers to the hub as a belt would, counting toward seals. Unlike `give`. */
+      deliver: (item: number, count: number): void => {
+        for (let i = 0; i < count; i++) this.sim.sieve.receive(item);
+      },
+      /** Seal progress: level, whether it is finished, and the active seal's level. */
+      seals: (): { level: number; finished: boolean; active: number | null } => ({
+        level: this.sim.progress.level,
+        finished: this.sim.progress.finished,
+        active: this.sim.progress.active?.level ?? null,
+      }),
       /** Hands a generator one fuel item, as a belt would. Returns whether it was taken. */
       fuel: (id: number, item: number): boolean => this.sim.power.accept(id, item),
       /** Power totals across every grid. */
@@ -486,6 +502,24 @@ export class Game {
     }
     this.hud.setStock(rows);
     this.hud.setAffordable(new Set(BUILDABLE_DEFS.filter((d) => this.builder.canAfford(d.id)).map((d) => d.id)));
+    this.hud.setUnlocked(new Set(BUILDABLE_DEFS.filter((d) => this.builder.buildingUnlocked(d.id)).map((d) => d.id)));
+    this.sealPanel.update(this.sim.progress);
+  }
+
+  /**
+   * The onboarding beat from GDD 11.3: a completed seal gets a one-line hint naming
+   * what it unlocked, plus a new-prime callout the first time a seal's requirements
+   * touch a raw material nothing has asked for yet.
+   */
+  private announceSeal(seal: SealDef): void {
+    const primes = newPrimesOf(seal.level).map((i) => PRIMES[i]);
+    const unlocked = [
+      ...seal.unlocks.buildings.map((id) => DEF_MAP.get(id)).filter((d): d is BuildingDef => !!d).map(displayName),
+      ...seal.unlocks.recipes.map((item) => itemName(item)),
+    ];
+    const primeText = primes.length > 0 ? `새로운 소수: ${primes.join(', ')} · ` : '';
+    const unlockText = unlocked.length > 0 ? `해금: ${unlocked.join(', ')}` : '';
+    this.hud.setHint(`🔓 봉인 ${seal.level} 달성 — ${primeText}${unlockText}`.trimEnd());
   }
 
   private onResize = (): void => {
@@ -596,14 +630,19 @@ export class Game {
     const spec = def.machine;
     this.selectedMachineId = id;
 
-    const recipes: RecipeChoice[] = RECIPE_BOOK.recipesFor(spec.class, spec.tier).map((r) => ({
-      item: r.output,
-      name: itemName(r.output),
-      color: ITEM_MAP.get(r.output)?.color ?? 0xffffff,
-      signature: formatSignature(RECIPE_BOOK.signature(r.output)),
-      ingredients: ingredientsText(r, itemName),
-      seconds: r.seconds,
-    }));
+    // Locked recipes are left off rather than shown disabled: the build bar can afford
+    // to tease what is coming because a locked building still says why when placed, but
+    // a machine already on the map has no such fallback surface for a recipe click.
+    const recipes: RecipeChoice[] = RECIPE_BOOK.recipesFor(spec.class, spec.tier)
+      .filter((r) => this.builder.recipeUnlocked(r.output))
+      .map((r) => ({
+        item: r.output,
+        name: itemName(r.output),
+        color: ITEM_MAP.get(r.output)?.color ?? 0xffffff,
+        signature: formatSignature(RECIPE_BOOK.signature(r.output)),
+        ingredients: ingredientsText(r, itemName),
+        seconds: r.seconds,
+      }));
 
     this.hud.openInspector({
       title: displayName(def),
@@ -623,8 +662,9 @@ export class Game {
   private pickRecipe(id: number, item: number): void {
     const previous = this.world.recipeOf(id);
     if (previous === item) return;
-
-    this.history.execute(new SetRecipeCommand(id, item, previous), this.builder);
+    // Refused for a recipe no seal has unlocked; the panel only ever offers unlocked
+    // ones, so this is a backstop, not something the player can normally hit.
+    if (!this.history.execute(new SetRecipeCommand(id, item, previous), this.builder)) return;
 
     const spec = DEF_MAP.get(this.world.buildingById(id)?.defId ?? '')?.machine;
     if (item !== 0 && spec) this.lastRecipe.set(spec.class, item);

@@ -331,6 +331,18 @@ export class Hud {
     }
   }
 
+  /**
+   * Marks the build buttons no seal has unlocked yet. They stay selectable — placing
+   * one still shows why it is refused, the same as an unaffordable one — but shown
+   * clearly out of reach so the panel does not silently invite an action that fails.
+   */
+  setUnlocked(unlocked: ReadonlySet<string>): void {
+    for (const [id, button] of this.buttons) {
+      if (id === 'erase') continue;
+      button.classList.toggle('tool--locked', !unlocked.has(id));
+    }
+  }
+
   /** Frame and tick timings. Empty text hides the readout. */
   setPerf(text: string): void {
     this.perfEl.textContent = text;

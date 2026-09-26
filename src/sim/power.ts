@@ -174,6 +174,10 @@ export class PowerSystem {
         poles.push({ id: b.id, x: b.x, y: b.y, range: def.pole.range });
         continue;
       }
+      // Most buildings in a busy factory are belts, which are neither a generator nor a
+      // consumer: skip the footprint math for them so a full rebuild stays cheap however
+      // many belts are on the map (this loop runs on every placement and removal).
+      if (!def.generator && !(def.draw && def.draw > 0)) continue;
       const { w, h } = rotatedSize(def, b.rot);
       if (def.generator) {
         generatorBuildings.push({ id: b.id, x: b.x, y: b.y, w, h, draw: 0 });

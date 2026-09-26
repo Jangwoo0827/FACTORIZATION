@@ -151,6 +151,7 @@ export type PlacementError =
   | 'occupied'
   | 'needs-ore'
   | 'unknown-def'
+  | 'locked'
   | 'cannot-afford';
 
 export type PlacementResult = { ok: true } | { ok: false; reason: PlacementError };
@@ -161,7 +162,46 @@ export const PLACEMENT_MESSAGE: Readonly<Record<PlacementError, string>> = {
   occupied: '이미 건물이 있습니다',
   'needs-ore': '광석 위에만 지을 수 있습니다',
   'unknown-def': '알 수 없는 건물입니다',
+  locked: '아직 해금되지 않았습니다',
   'cannot-afford': '재고가 부족합니다',
+};
+
+/**
+ * What a seal asks for (GDD 9).
+ *
+ *  - `deliver`: this many of an item delivered to the hub in total. Cumulative, and
+ *    never reduced by spending stock, so building cannot set progress back.
+ *  - `sustain`: keep delivering at least `perMinute` of an item, every minute, for
+ *    `minutes` minutes running. A dip resets the count.
+ */
+export type SealRequirement =
+  | { readonly kind: 'deliver'; readonly item: ItemId; readonly count: number }
+  | { readonly kind: 'sustain'; readonly item: ItemId; readonly perMinute: number; readonly minutes: number };
+
+/** What completing a seal makes available. Buildings by id, recipes by the item they make. */
+export interface Unlocks {
+  readonly buildings: readonly string[];
+  readonly recipes: readonly ItemId[];
+}
+
+export interface SealDef {
+  /** 1-based; a seal opens only once the one before it has. */
+  readonly level: number;
+  /** All of these must be met. */
+  readonly requires: readonly SealRequirement[];
+  readonly unlocks: Unlocks;
+}
+
+/** What the player may build and which recipes they may set. */
+export interface Availability {
+  buildingUnlocked(defId: string): boolean;
+  recipeUnlocked(item: ItemId): boolean;
+}
+
+/** Everything available: for tests and tools that are not playing the progression. */
+export const EVERYTHING_UNLOCKED: Availability = {
+  buildingUnlocked: () => true,
+  recipeUnlocked: () => true,
 };
 
 /** Footprint size after rotation. Odd quarter turns swap the axes. */

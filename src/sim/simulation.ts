@@ -16,6 +16,7 @@ import { BeltGrid } from './belts';
 import { MachineSystem } from './machines';
 import { MinerSystem } from './miners';
 import { PowerSystem } from './power';
+import { Progress } from './progress';
 import { Sieve } from './sieve';
 import { isBeltKind, rotatedSize, type ItemId, type PlacedBuilding } from './types';
 import type { World } from './world';
@@ -25,6 +26,8 @@ const DT = 1 / SIM_TPS;
 export class Simulation {
   readonly belts: BeltGrid;
   readonly sieve = new Sieve();
+  /** Seals opened so far, and so what may be built. */
+  readonly progress = new Progress(this.sieve);
   readonly power: PowerSystem;
   readonly miners: MinerSystem;
   readonly machines: MachineSystem;
@@ -72,7 +75,9 @@ export class Simulation {
     this.machines.step();
 
     this.tick++;
-    if (this.tick % SIM_TPS === 0) this.sieve.recordSecond();
+    const endOfSecond = this.tick % SIM_TPS === 0;
+    if (endOfSecond) this.sieve.recordSecond();
+    this.progress.step(endOfSecond);
   }
 
   /** Re-reads the world into the belt grid and miner list. Idempotent. */

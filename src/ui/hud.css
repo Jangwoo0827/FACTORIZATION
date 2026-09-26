@@ -178,12 +178,42 @@ body {
   display: none !important;
 }
 
-.hud__stock {
+.hud__stock,
+.hud__seal {
   min-width: 190px;
   max-width: min(60vw, 280px);
   padding: 8px 12px;
   font-size: 13px;
   font-variant-numeric: tabular-nums;
+}
+
+.seal__done {
+  font-weight: 600;
+}
+
+.seal__req {
+  margin-top: 6px;
+}
+
+.seal__req-label {
+  font-size: 12px;
+}
+
+.seal__req-label--met {
+  color: var(--accent);
+}
+
+.seal__unlocks {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.seal__lock {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: normal; /* superscript digits read as text, not tabular figures */
 }
 
 .stock__title {
@@ -631,6 +661,12 @@ body {
 
 .tool--poor .tool__size {
   color: var(--danger);
+}
+
+/* A building no seal has unlocked yet: shown (GDD 12.2's discoverability principle)
+   but dimmer than "can't afford", since there is nothing to fix by mining more. */
+.tool--locked {
+  opacity: 0.35;
 }
 
 /* ---------------------------------------------------------------- adaptive */

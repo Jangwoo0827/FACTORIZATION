@@ -12,14 +12,42 @@
  */
 
 import type { Sieve } from './sieve';
-import type { Cost, PlacedBuilding, PlacementResult, Rotation } from './types';
+import {
+  EVERYTHING_UNLOCKED,
+  type Availability,
+  type Cost,
+  type ItemId,
+  type PlacedBuilding,
+  type PlacementResult,
+  type Rotation,
+} from './types';
 import type { World } from './world';
 
 export class Builder {
   constructor(
     readonly world: World,
     private readonly sieve: Sieve,
+    /** What the player has earned. Everything, unless the game says otherwise. */
+    private readonly unlocks: Availability = EVERYTHING_UNLOCKED,
   ) {}
+
+  buildingUnlocked(defId: string): boolean {
+    return this.unlocks.buildingUnlocked(defId);
+  }
+
+  recipeUnlocked(item: ItemId): boolean {
+    return this.unlocks.recipeUnlocked(item);
+  }
+
+  /**
+   * Sets what a machine makes. Clearing (0) is always allowed; anything else must be
+   * a recipe the player has unlocked. Returns whether it was applied.
+   */
+  setRecipe(buildingId: number, item: ItemId): boolean {
+    if (item !== 0 && !this.unlocks.recipeUnlocked(item)) return false;
+    this.world.setRecipe(buildingId, item);
+    return true;
+  }
 
   /** What a building costs. Free (empty) for anything without a price, such as the hub. */
   costOf(defId: string): readonly Cost[] {
@@ -27,13 +55,14 @@ export class Builder {
   }
 
   /**
-   * Whether a building could be placed here: the world's rules first, then whether
-   * the stock covers it. Reports the first thing wrong, which is what the player
-   * needs to fix first.
+   * Whether a building could be placed here: the world's rules first, then whether it
+   * is unlocked, then whether the stock covers it. Reports the first thing wrong,
+   * which is what the player needs to fix first.
    */
   checkPlacement(defId: string, x: number, y: number, rot: Rotation): PlacementResult {
     const result = this.world.checkPlacement(defId, x, y, rot);
     if (!result.ok) return result;
+    if (!this.unlocks.buildingUnlocked(defId)) return { ok: false, reason: 'locked' };
     if (!this.sieve.canAfford(this.costOf(defId))) return { ok: false, reason: 'cannot-afford' };
     return { ok: true };
   }

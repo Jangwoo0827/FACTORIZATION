@@ -77,6 +77,18 @@ export class Sieve {
   }
 
   /**
+   * How many of an item arrived in exactly the last 60 seconds, or null until a full
+   * minute has been recorded.
+   *
+   * A whole number, unlike `perMinute`, and only ever a whole window: a seal that asks
+   * for a steady rate must not be satisfied by one lucky second at the start.
+   */
+  deliveredInLastMinute(item: ItemId): number | null {
+    if (this.history.length < HISTORY_SNAPSHOTS) return null;
+    return this.history[this.history.length - 1]![item]! - this.history[0]![item]!;
+  }
+
+  /**
    * Deliveries per minute, averaged over up to the last minute.
    *
    * Compares two snapshots rather than the live counter. The counter includes part
