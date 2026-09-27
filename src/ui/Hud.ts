@@ -102,6 +102,8 @@ export class Hud {
   private arrowLeft!: HTMLButtonElement;
   private arrowRight!: HTMLButtonElement;
   private unlocked: ReadonlySet<string> | null = null;
+  /** The selection last shown, so a tab is only brought forward when it changes. */
+  private lastSelection: string | null = null;
   private readonly statusEl: HTMLElement;
   private readonly detailEl: HTMLElement;
   private readonly problemEl: HTMLElement;
@@ -159,7 +161,11 @@ export class Hud {
       button.classList.toggle('is-active', active);
       button.setAttribute('aria-pressed', String(active));
     }
-    // A building picked some other way (the eyedropper) brings its tab to the front.
+    // A building picked some other way (the eyedropper) brings its tab to the front —
+    // but only when the selection changes. This is called on every HUD refresh, and
+    // doing it each time would snap the bar back while the player browses other tabs.
+    if (selected === this.lastSelection) return;
+    this.lastSelection = selected;
     const category = selected && selected !== 'erase' ? categoryOf(selected) : undefined;
     if (category && category.id !== this.activeTab) this.showTab(category.id);
     if (category) this.buttons.get(selected!)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
