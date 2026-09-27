@@ -117,3 +117,51 @@ export function equationOf(
   );
   return `${nameOf(item)} = ${parts.join(' × ')}`;
 }
+
+/**
+ * How one stage of the chain compares with what the factory really makes (GDD 5.4.3).
+ *
+ *  - `ok`: making at least what the target needs
+ *  - `short`: making too little, but because something it is made from is short too
+ *  - `bottleneck`: making too little while everything it is made from is plentiful —
+ *    the stage to fix. Several stages can be short from one cause; this names the cause.
+ *
+ * A raw material has nothing upstream, so a short one is always a bottleneck: more
+ * miners.
+ */
+export type SupplyStatus = 'ok' | 'short' | 'bottleneck';
+
+export interface Comparison {
+  readonly item: ItemId;
+  /** Per minute the target needs. */
+  readonly need: number;
+  /** Per minute the factory actually makes. */
+  readonly actual: number;
+  readonly status: SupplyStatus;
+}
+
+/**
+ * @param actual items per minute the factory makes of an item
+ * @param tolerance fraction below the need still counted as enough, so that a machine
+ *   running at exactly the target rate is not flagged for reading 37 instead of 37.5
+ */
+export function compareWithActual(
+  model: FactorModel,
+  book: RecipeBook,
+  actual: (item: ItemId) => number,
+  tolerance = 0.02,
+): Map<ItemId, Comparison> {
+  const enough = new Map<ItemId, boolean>();
+  for (const row of model.rows) enough.set(row.item, actual(row.item) >= row.perMinute * (1 - tolerance));
+
+  const out = new Map<ItemId, Comparison>();
+  for (const row of model.rows) {
+    let status: SupplyStatus = 'ok';
+    if (!enough.get(row.item)) {
+      const inputs = book.recipe(row.item)?.inputs ?? [];
+      status = inputs.every((i) => enough.get(i.item) !== false) ? 'bottleneck' : 'short';
+    }
+    out.set(row.item, { item: row.item, need: row.perMinute, actual: actual(row.item), status });
+  }
+  return out;
+}

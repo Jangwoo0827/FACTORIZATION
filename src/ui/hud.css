@@ -215,6 +215,29 @@ body {
   background: rgba(88, 178, 232, 0.22);
 }
 
+.factor__verdict {
+  margin: 4px 0 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+  color: var(--danger);
+  background: rgba(228, 99, 92, 0.12);
+  border-radius: 6px;
+}
+
+.factor__verdict--ok {
+  color: #5dd67a;
+  background: rgba(93, 214, 122, 0.1);
+}
+
+.req-row--short td {
+  color: #e8c34a;
+}
+
+.req-row--bottleneck td {
+  color: var(--danger);
+  font-weight: 600;
+}
+
 .stats__tabs {
   display: flex;
   gap: 4px;

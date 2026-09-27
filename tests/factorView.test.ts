@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Item, ITEM_DEFS, itemName } from '../src/data/items';
 import { RECIPE_BOOK } from '../src/data/recipes';
-import { buildFactorModel, equationOf } from '../src/factor/view';
+import { buildFactorModel, compareWithActual, equationOf } from '../src/factor/view';
 
 const MINER = 0.5;
 const model = (item: number, perMinute = 6) => buildFactorModel(RECIPE_BOOK, item, perMinute, itemName, MINER);
@@ -108,6 +108,70 @@ describe('the factorisation view model', () => {
       expect(m.tree.length).toBeGreaterThan(1);
       expect(m.chips.length).toBeGreaterThan(0);
       expect(m.signatureText).not.toBe('1');
+    }
+  });
+});
+
+describe('comparing the chain with what the factory makes', () => {
+  // Circuits at 30/min: 30 iron plate, 60 copper wire, 60 copper plate, 30 iron ore, 60 copper ore.
+  const circuits = model(Item.Circuit, 30);
+  const need = new Map(circuits.rows.map((r) => [r.item, r.perMinute]));
+  const compare = (overrides: Record<number, number>) =>
+    compareWithActual(circuits, RECIPE_BOOK, (item) => overrides[item] ?? need.get(item) ?? 0);
+  const statuses = (overrides: Record<number, number>) =>
+    Object.fromEntries([...compare(overrides)].map(([item, c]) => [itemName(item), c.status]));
+
+  it('calls every stage fine when each makes what the target needs', () => {
+    expect(new Set(Object.values(statuses({})))).toEqual(new Set(['ok']));
+  });
+
+  it('names the raw material as the cause when too little is mined, and everything above it as short', () => {
+    const s = statuses({
+      [Item.CopperOre]: 30,
+      [Item.CopperPlate]: 30,
+      [Item.CopperWire]: 30,
+      [Item.Circuit]: 15,
+    });
+    expect(s[itemName(Item.CopperOre)]).toBe('bottleneck');
+    expect(s[itemName(Item.CopperPlate)]).toBe('short');
+    expect(s[itemName(Item.CopperWire)]).toBe('short');
+    expect(s[itemName(Item.Circuit)]).toBe('short');
+    // The iron side is untouched.
+    expect(s[itemName(Item.IronOre)]).toBe('ok');
+    expect(s[itemName(Item.IronPlate)]).toBe('ok');
+  });
+
+  it('names a middle stage as the cause when its inputs are plentiful but it makes too little', () => {
+    const s = statuses({ [Item.CopperPlate]: 20, [Item.CopperWire]: 20, [Item.Circuit]: 10 });
+    expect(s[itemName(Item.CopperOre)]).toBe('ok');
+    expect(s[itemName(Item.CopperPlate)]).toBe('bottleneck');
+    expect(s[itemName(Item.CopperWire)]).toBe('short');
+  });
+
+  it('can name two separate causes at once', () => {
+    const s = statuses({ [Item.IronOre]: 5, [Item.IronPlate]: 5, [Item.CopperWire]: 10, [Item.Circuit]: 5 });
+    expect(s[itemName(Item.IronOre)]).toBe('bottleneck');
+    expect(s[itemName(Item.CopperWire)]).toBe('bottleneck');
+    expect(s[itemName(Item.Circuit)]).toBe('short');
+  });
+
+  it('forgives a reading a whisker under the target, but not a real shortfall', () => {
+    const plates = model(Item.IronPlate, 37.5);
+    const at = (rate: number) =>
+      compareWithActual(plates, RECIPE_BOOK, (item) => (item === Item.IronPlate ? rate : 100)).get(Item.IronPlate)!.status;
+    expect(at(37)).toBe('ok');
+    expect(at(35)).toBe('bottleneck');
+  });
+
+  it('reports the need and the actual rate alongside the verdict', () => {
+    const c = compare({ [Item.CopperOre]: 12 }).get(Item.CopperOre)!;
+    expect(c).toMatchObject({ need: 60, actual: 12, status: 'bottleneck' });
+  });
+
+  it('with nothing built, blames only the raw materials', () => {
+    const nothing = compareWithActual(circuits, RECIPE_BOOK, () => 0);
+    for (const [item, c] of nothing) {
+      expect(c.status, itemName(item)).toBe(RECIPE_BOOK.isRaw(item) ? 'bottleneck' : 'short');
     }
   });
 });

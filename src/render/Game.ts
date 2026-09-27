@@ -73,7 +73,7 @@ import {
 import type { World } from '../sim/world';
 import { generateWorld } from '../sim/worldgen';
 import { Heartbeat } from '../runtime/heartbeat';
-import { FactorPanel } from '../ui/FactorPanel';
+import { COMPARE_WINDOW, FactorPanel } from '../ui/FactorPanel';
 import { Hud, type InspectorLive, type RecipeChoice, type StockRow } from '../ui/Hud';
 import { SealPanel } from '../ui/SealPanel';
 import { StatsPanel } from '../ui/StatsPanel';
@@ -205,7 +205,10 @@ export class Game {
     this.worldView = new WorldView(this.scene, this.world);
     this.itemView = new ItemView(this.scene, this.sim);
     this.machineStatus = new MachineStatusView(this.scene, this.sim);
-    this.factorPanel = new FactorPanel(document.getElementById('hud-factor')!, Item.GateComponent);
+    this.factorPanel = new FactorPanel(document.getElementById('hud-factor')!, Item.GateComponent, () => ({
+      rate: (item) => this.sim.stats.producedPerMinute(item, COMPARE_WINDOW),
+      seconds: this.sim.stats.seconds,
+    }));
     this.sealPanel = new SealPanel(document.getElementById('hud-seal')!);
     this.statsPanel = new StatsPanel(document.getElementById('hud-stats')!);
     this.powerOverlay = new PowerOverlayView(this.scene, this.world, this.sim.power);
@@ -300,6 +303,7 @@ export class Game {
         this.refreshPowerOverlay();
         this.refreshStock();
         this.statsPanel.update(this.sim.stats);
+        this.factorPanel.refresh();
         this.refreshHud();
       },
       /** Belts with their direction, as `[x, y, dir]`. */
@@ -480,6 +484,7 @@ export class Game {
       this.refreshStock();
       this.refreshInspector();
       this.statsPanel.update(this.sim.stats);
+      this.factorPanel.refresh();
       // Hover text shows live values (a miner's buffer, say), so it needs re-reading
       // even when the cursor has not moved.
       this.refreshHud();

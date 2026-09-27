@@ -11,7 +11,18 @@ import { MINER_MK1_RATE_PER_TILE } from '../config';
 import { ITEM_MAP, itemName } from '../data/items';
 import { MACHINE_LABEL, RECIPE_BOOK } from '../data/recipes';
 import { superscript } from '../factor/signature';
-import { buildFactorModel, type FactorModel } from '../factor/view';
+import { buildFactorModel, compareWithActual, type Comparison, type FactorModel } from '../factor/view';
+
+/** Where the panel reads what the factory really makes. */
+export interface ActualRates {
+  /** Items per minute made of an item, over the comparison window. */
+  rate(item: number): number;
+  /** Seconds of history the rates cover. */
+  seconds: number;
+}
+
+/** How long the comparison averages over, in seconds. */
+export const COMPARE_WINDOW = 600;
 
 /** A Mk1 miner with all four tiles on ore. */
 const MINER_FULL_RATE = MINER_MK1_RATE_PER_TILE * 4;
@@ -25,6 +36,8 @@ export class FactorPanel {
   constructor(
     private readonly root: HTMLElement,
     initialItem: number,
+    /** What the factory makes now; without it the panel only plans. */
+    private readonly actual?: () => ActualRates,
   ) {
     this.item = initialItem;
     this.root.replaceChildren();
@@ -91,6 +104,12 @@ export class FactorPanel {
 
   toggle(): void {
     this.root.hidden = !this.root.hidden;
+    if (!this.root.hidden) this.render();
+  }
+
+  /** Re-reads the factory's actual rates. Called on the HUD's refresh while open. */
+  refresh(): void {
+    if (!this.root.hidden && this.actual) this.render();
   }
 
   hide(): void {
@@ -158,6 +177,16 @@ export class FactorPanel {
     return section;
   }
 
+  private verdict(comparison: ReadonlyMap<number, Comparison>, seconds: number): HTMLElement {
+    const { text, ok } = verdictText(comparison);
+    const el = document.createElement('div');
+    el.className = ok ? 'factor__verdict factor__verdict--ok' : 'factor__verdict';
+    const window = Math.min(seconds, COMPARE_WINDOW);
+    el.textContent = text;
+    el.title = `실제 생산률: 지난 ${window >= 60 ? `${Math.round(window / 60)}분` : `${window}초`} 평균 (생산 통계와 같은 수치)`;
+    return el;
+  }
+
   private requirementSection(model: FactorModel): HTMLElement {
     const section = document.createElement('div');
     const label = document.createElement('div');
@@ -165,10 +194,14 @@ export class FactorPanel {
     label.textContent = `${this.perMinute}개/분을 만들려면`;
     section.appendChild(label);
 
+    const live = this.actual?.();
+    const comparison = live && live.seconds > 0 ? compareWithActual(model, RECIPE_BOOK, (i) => live.rate(i)) : null;
+    if (comparison) section.appendChild(this.verdict(comparison, live!.seconds));
+
     const table = document.createElement('table');
     table.className = 'req-table';
     const head = table.createTHead().insertRow();
-    for (const text of ['품목', '/분', '필요']) {
+    for (const text of comparison ? ['품목', '/분', '필요', '실제'] : ['품목', '/분', '필요']) {
       const th = document.createElement('th');
       th.textContent = text;
       head.appendChild(th);
@@ -188,10 +221,31 @@ export class FactorPanel {
         need.textContent = `채굴기 ×${Math.ceil(row.miners - 1e-9)}`;
         need.title = `정확히 ${row.miners.toFixed(2)}기 (광석 4칸 기준)`;
       }
+
+      const c = comparison?.get(row.item);
+      if (c) {
+        const cell = tr.insertCell();
+        cell.textContent = formatRate(c.actual);
+        tr.className = `req-row--${c.status}`;
+        cell.title =
+          c.status === 'ok'
+            ? '충분'
+            : c.status === 'bottleneck'
+              ? '병목: 재료는 충분한데 이 단계가 부족합니다'
+              : '부족: 재료부터 부족합니다';
+      }
     }
     section.appendChild(table);
     return section;
   }
+}
+
+/** One line naming what to fix, or that nothing needs fixing. */
+function verdictText(comparison: ReadonlyMap<number, Comparison>): { text: string; ok: boolean } {
+  const causes = [...comparison.values()].filter((c) => c.status === 'bottleneck');
+  if (causes.length === 0) return { text: '✓ 현재 공장이 이 목표를 채우고 있어요', ok: true };
+  const names = causes.map((c) => `${itemName(c.item)} (${formatRate(c.actual)}/${formatRate(c.need)})`);
+  return { text: `병목: ${names.join(', ')} — 여기를 늘리세요`, ok: false };
 }
 
 function formatRate(perMinute: number): string {
