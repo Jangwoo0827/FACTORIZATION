@@ -80,6 +80,7 @@ import { CameraRig } from './CameraRig';
 import { GhostView } from './GhostView';
 import { ItemView } from './ItemView';
 import { MachineStatusView } from './MachineStatusView';
+import { PowerOverlayView } from './PowerOverlayView';
 import { fitRenderer } from './viewport';
 import { WorldView } from './WorldView';
 
@@ -113,6 +114,9 @@ export class Game {
   private readonly machineStatus: MachineStatusView;
   private readonly factorPanel: FactorPanel;
   private readonly sealPanel: SealPanel;
+  private readonly powerOverlay: PowerOverlayView;
+  /** P toggles this. The overlay also shows on its own while a power building is held. */
+  private powerOverlayOn = false;
   private readonly ghost: GhostView;
   private readonly adapter: InputAdapter;
   private readonly hud: Hud;
@@ -201,6 +205,7 @@ export class Game {
     this.machineStatus = new MachineStatusView(this.scene, this.sim);
     this.factorPanel = new FactorPanel(document.getElementById('hud-factor')!, Item.GateComponent);
     this.sealPanel = new SealPanel(document.getElementById('hud-seal')!);
+    this.powerOverlay = new PowerOverlayView(this.scene, this.world, this.sim.power);
     this.ghost = new GhostView(this.scene);
     this.sim.progress.onComplete = (seal) => this.announceSeal(seal);
 
@@ -210,6 +215,7 @@ export class Game {
       onSelectBuilding: (id) => this.selectBuilding(id),
       onSelectErase: () => this.toggleErase(),
       onToggleFactor: () => this.factorPanel.toggle(),
+      onTogglePower: () => this.togglePowerOverlay(),
       onRotate: () => this.rotateBuilding(),
       onRotateView: (delta) => {
         this.rig.rotateYaw(delta * YAW_STEP);
@@ -245,6 +251,7 @@ export class Game {
         onUndo: () => this.undo(),
         onRedo: () => this.redo(),
         onToggleFactor: () => this.factorPanel.toggle(),
+        onTogglePower: () => this.togglePowerOverlay(),
         onCancel: () => this.clearTool(),
       },
     });
@@ -285,6 +292,7 @@ export class Game {
         }
         this.itemView.update(0);
         this.machineStatus.update();
+        this.refreshPowerOverlay();
         this.refreshStock();
         this.refreshHud();
       },
@@ -333,6 +341,11 @@ export class Game {
       panelText: (which: 'inspector' | 'factor'): string =>
         document.getElementById(`hud-${which}`)?.innerText.replace(/\n+/g, ' | ') ?? '',
       lights: (): number => this.machineStatus.count,
+      /** Line segments the power overlay draws now; 0 while it is hidden. */
+      overlaySegments: (): number => this.powerOverlay.segmentCount,
+      togglePower: (): void => this.togglePowerOverlay(),
+      /** Selects a build tool as the build bar would. */
+      tool: (defId: string | null): void => this.selectBuilding(defId),
       /** Whether the background timer is a worker (survives a hidden tab) or the fallback. */
       heartbeatUsesWorker: (): boolean => this.heartbeat.usesWorker,
       /** Real time still owed to the simulation, in seconds. */
@@ -376,6 +389,7 @@ export class Game {
     this.hud.destroy();
     this.itemView.dispose();
     this.machineStatus.dispose();
+    this.powerOverlay.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
@@ -412,6 +426,7 @@ export class Game {
     }
     this.itemView.update(this.clock.alpha);
     this.machineStatus.update();
+    this.refreshPowerOverlay();
 
     this.worldView.setGridVisible(this.toolActive() && this.rig.zoom <= GRID_MAX_VIEW_SIZE);
     this.renderer.render(this.scene, this.rig.camera);
@@ -504,6 +519,34 @@ export class Game {
     this.hud.setAffordable(new Set(BUILDABLE_DEFS.filter((d) => this.builder.canAfford(d.id)).map((d) => d.id)));
     this.hud.setUnlocked(new Set(BUILDABLE_DEFS.filter((d) => this.builder.buildingUnlocked(d.id)).map((d) => d.id)));
     this.sealPanel.update(this.sim.progress);
+
+    const power = this.sim.power.summary();
+    const stranded = this.sim.power.stranded.length;
+    this.hud.setPower(
+      power.grids > 0 || stranded > 0
+        ? { ...power, stranded, overlayOn: this.powerOverlayOn }
+        : null,
+    );
+  }
+
+  private togglePowerOverlay(): void {
+    this.powerOverlayOn = !this.powerOverlayOn;
+    this.refreshPowerOverlay();
+    this.refreshGhost();
+    this.refreshStock();
+  }
+
+  /** Shows or hides the overlay and brings it up to date, without waiting for a frame. */
+  private refreshPowerOverlay(): void {
+    this.powerOverlay.setVisible(this.powerOverlayOn || this.powerToolActive());
+    this.powerOverlay.update();
+  }
+
+  /** Holding a pole, generator or anything that draws power shows the overlay by itself. */
+  private powerToolActive(): boolean {
+    if (this.eraseMode || !this.selectedDefId) return false;
+    const def = DEF_MAP.get(this.selectedDefId);
+    return !!def && (!!def.pole || !!def.generator || (def.draw ?? 0) > 0);
   }
 
   /**
@@ -553,6 +596,7 @@ export class Game {
   private selectBuilding(defId: string | null): void {
     this.selectedDefId = defId;
     this.eraseMode = false;
+    this.refreshPowerOverlay();
     this.refreshGhost();
     this.refreshHud();
   }
@@ -939,6 +983,7 @@ export class Game {
     // mouse moves. Rotating or switching tools redraws it without a mouse move, and
     // a stale record would make the next move look like "nothing changed".
     this.hoverOrigin = null;
+    this.powerOverlay.setPreview(null);
 
     const hover = this.hoverTile;
     if (!hover) {
@@ -973,6 +1018,9 @@ export class Game {
 
     const origin = this.originFor(def, this.hoverPoint ?? { x: hover.x + 0.5, y: hover.y + 0.5 });
     this.hoverOrigin = origin;
+    this.powerOverlay.setVisible(this.powerOverlayOn || this.powerToolActive());
+    if (def.pole) this.powerOverlay.setPreview(origin.x, origin.y, def.pole.range);
+    else this.powerOverlay.setPreview(null);
     const { w, h } = rotatedSize(def, this.rotation);
     const valid = this.builder.checkPlacement(defId, origin.x, origin.y, this.rotation).ok;
     this.ghost.showBuilding(

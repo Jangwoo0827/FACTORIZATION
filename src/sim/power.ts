@@ -78,6 +78,24 @@ export interface Wire {
   readonly grid: number;
 }
 
+/** A pole's reach, for the overlay: the square of tiles it powers, and its grid. */
+export interface PoleArea {
+  readonly id: number;
+  readonly x: number;
+  readonly y: number;
+  readonly range: number;
+  readonly grid: number;
+}
+
+/** A building that draws power or generates it but that no pole reaches. */
+export interface Stranded {
+  readonly id: number;
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
+
 interface Pole {
   readonly id: number;
   readonly x: number;
@@ -90,6 +108,10 @@ export class PowerSystem {
   private consumers = new Map<number, Consumer>();
   private generators = new Map<number, GeneratorState>();
   private wireList: Wire[] = [];
+  private poleAreas: PoleArea[] = [];
+  private strandedList: Stranded[] = [];
+  /** Bumped by every rebuild, so a view can tell when the grids were last re-derived. */
+  private version = 0;
 
   /** Called when a burnt fuel item is used up, for statistics. */
   onFuelBurnt: (item: ItemId) => void = () => {};
@@ -102,6 +124,21 @@ export class PowerSystem {
 
   get wires(): readonly Wire[] {
     return this.wireList;
+  }
+
+  /** Increments whenever the grids are re-derived from the map. */
+  get rebuilds(): number {
+    return this.version;
+  }
+
+  /** Every pole's reach, with its grid, ascending by pole id. */
+  get poles(): readonly PoleArea[] {
+    return this.poleAreas;
+  }
+
+  /** Consumers and generators no pole reaches: the overlay marks these. */
+  get stranded(): readonly Stranded[] {
+    return this.strandedList;
   }
 
   generator(id: number): Readonly<GeneratorState> | null {
@@ -268,6 +305,7 @@ export class PowerSystem {
       return best;
     };
 
+    const stranded: Stranded[] = [];
     const consumers = new Map<number, Consumer>();
     for (const c of consumerBuildings) {
       const pole = attach(c);
@@ -277,6 +315,8 @@ export class PowerSystem {
         grids[grid]!.demand += c.draw;
         grids[grid]!.consumers++;
         wires.push({ ax: poles[pole]!.x + 0.5, ay: poles[pole]!.y + 0.5, bx: c.x + c.w / 2, by: c.y + c.h / 2, grid });
+      } else {
+        stranded.push({ id: c.id, x: c.x, y: c.y, w: c.w, h: c.h });
       }
     }
     for (const g of generatorBuildings) {
@@ -286,6 +326,8 @@ export class PowerSystem {
       if (state.grid >= 0) {
         grids[state.grid]!.generators++;
         wires.push({ ax: poles[pole]!.x + 0.5, ay: poles[pole]!.y + 0.5, bx: g.x + g.w / 2, by: g.y + g.h / 2, grid: state.grid });
+      } else {
+        stranded.push({ id: g.id, x: g.x, y: g.y, w: g.w, h: g.h });
       }
     }
 
@@ -293,6 +335,9 @@ export class PowerSystem {
     this.consumers = consumers;
     this.generators = generators;
     this.wireList = wires;
+    this.poleAreas = poles.map((p, i) => ({ id: p.id, x: p.x, y: p.y, range: p.range, grid: poleGrid[i]! }));
+    this.strandedList = stranded;
+    this.version++;
     this.settle();
   }
 

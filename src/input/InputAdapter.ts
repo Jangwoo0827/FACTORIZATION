@@ -38,6 +38,8 @@ export interface InputHandlers {
   onRedo(): void;
   /** Show or hide the factorisation view. */
   onToggleFactor(): void;
+  /** P: the power overlay. */
+  onTogglePower(): void;
   /** Escape: clear the current selection. */
   onCancel(): void;
 }
@@ -298,6 +300,10 @@ export class InputAdapter {
       case 'KeyT':
         e.preventDefault();
         this.handlers.onToggleFactor();
+        return;
+      case 'KeyP':
+        e.preventDefault();
+        this.handlers.onTogglePower();
         return;
       case 'Escape':
         e.preventDefault();

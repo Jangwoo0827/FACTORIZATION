@@ -46,6 +46,7 @@ export interface InspectorLive {
 export interface HudCallbacks {
   onSelectBuilding(defId: string | null): void;
   onToggleFactor(): void;
+  onTogglePower(): void;
   onSelectErase(): void;
   onRotate(): void;
   onRotateView(delta: -1 | 1): void;
@@ -60,6 +61,18 @@ export interface StockRow {
   color: number;
   stock: number;
   perMinute: number;
+}
+
+/** The power gauge (GDD 11.1). Null hides it: nothing on the map uses power yet. */
+export interface PowerGauge {
+  supply: number;
+  demand: number;
+  /** Worst grid's satisfaction, 0..1000. */
+  level: number;
+  grids: number;
+  /** Buildings that need power but that no pole reaches. */
+  stranded: number;
+  overlayOn: boolean;
 }
 
 export interface HudStatus {
@@ -88,6 +101,7 @@ export class Hud {
   private readonly stockEl: HTMLElement;
   private readonly perfEl: HTMLElement;
   private readonly inspectorEl: HTMLElement;
+  private readonly powerEl: HTMLElement;
   private inspector: {
     dot: HTMLElement;
     status: HTMLElement;
@@ -107,6 +121,7 @@ export class Hud {
     this.stockEl = requireElement('hud-stock');
     this.perfEl = requireElement('hud-perf');
     this.inspectorEl = requireElement('hud-inspector');
+    this.powerEl = requireElement('hud-power');
 
     this.buildBar.replaceChildren();
     for (const def of defs) {
@@ -343,6 +358,47 @@ export class Hud {
     }
   }
 
+  /** The power gauge. Hidden until something on the map makes or uses power. */
+  setPower(gauge: PowerGauge | null): void {
+    this.powerEl.hidden = gauge === null;
+    this.powerActive(gauge?.overlayOn ?? false);
+    if (!gauge) return;
+
+    const percent = gauge.demand === 0 ? 100 : Math.round(gauge.level / 10);
+    const kind = gauge.demand === 0 || gauge.level >= 1000 ? 'ok' : gauge.level === 0 ? 'dead' : 'low';
+
+    this.powerEl.replaceChildren();
+    const title = document.createElement('div');
+    title.className = 'stock__title';
+    title.textContent = gauge.grids > 1 ? `전력 · 전력망 ${gauge.grids}개 (가장 나쁜 곳 기준)` : '전력';
+
+    const line = document.createElement('div');
+    line.className = `power__line power__line--${kind}`;
+    line.textContent = `⚡ ${percent}% · 공급 ${gauge.supply} / 수요 ${gauge.demand} PU`;
+
+    const bar = document.createElement('div');
+    bar.className = 'progress';
+    const fill = document.createElement('div');
+    fill.className = `progress__bar power__bar--${kind}`;
+    fill.style.width = `${Math.min(100, percent)}%`;
+    bar.appendChild(fill);
+
+    this.powerEl.append(title, line, bar);
+    if (gauge.stranded > 0) {
+      const warn = document.createElement('div');
+      warn.className = 'power__stranded';
+      warn.textContent = `기둥이 닿지 않는 건물 ${gauge.stranded}개 (P로 확인)`;
+      this.powerEl.appendChild(warn);
+    }
+  }
+
+  /** Lights the ⚡ button while the overlay is on. */
+  private powerActive(on: boolean): void {
+    const button = this.controls.querySelector<HTMLElement>('[data-action="power"]');
+    button?.classList.toggle('is-active', on);
+    button?.setAttribute('aria-pressed', String(on));
+  }
+
   /** Frame and tick timings. Empty text hides the readout. */
   setPerf(text: string): void {
     this.perfEl.textContent = text;
@@ -394,6 +450,9 @@ export class Hud {
         return;
       case 'factor':
         this.callbacks.onToggleFactor();
+        return;
+      case 'power':
+        this.callbacks.onTogglePower();
         return;
       case 'view-left':
         this.callbacks.onRotateView(-1);

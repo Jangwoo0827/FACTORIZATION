@@ -49,6 +49,15 @@
           >
             ∏
           </button>
+          <button
+            class="icon-button"
+            type="button"
+            data-action="power"
+            title="전력망 오버레이 (P)"
+            aria-label="전력망 오버레이"
+          >
+            ⚡
+          </button>
           <button class="icon-button" type="button" data-action="rotate" title="건물 회전 (R)" aria-label="건물 회전">
             ↻
           </button>
@@ -64,6 +73,7 @@
       <div class="hud__mid">
         <div class="hud__col">
           <div class="panel hud__seal" id="hud-seal"></div>
+          <div class="panel hud__power" id="hud-power" hidden></div>
           <div class="panel hud__stock" id="hud-stock"></div>
           <div class="hud__perf" id="hud-perf"></div>
         </div>

@@ -179,12 +179,40 @@ body {
 }
 
 .hud__stock,
-.hud__seal {
+.hud__seal,
+.hud__power {
   min-width: 190px;
   max-width: min(60vw, 280px);
   padding: 8px 12px;
   font-size: 13px;
   font-variant-numeric: tabular-nums;
+}
+
+.power__line--low {
+  color: #e8c34a;
+}
+
+.power__line--dead {
+  color: var(--danger);
+}
+
+.power__bar--low {
+  background: #e8c34a;
+}
+
+.power__bar--dead {
+  background: var(--danger);
+}
+
+.power__stranded {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--danger);
+}
+
+.icon-button.is-active {
+  border-color: var(--accent);
+  background: rgba(88, 178, 232, 0.22);
 }
 
 .seal__done {

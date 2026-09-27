@@ -31,6 +31,7 @@ function makeHandlers(): MockedHandlers {
     onUndo: vi.fn<InputHandlers['onUndo']>(),
     onRedo: vi.fn<InputHandlers['onRedo']>(),
     onToggleFactor: vi.fn<InputHandlers['onToggleFactor']>(),
+    onTogglePower: vi.fn<InputHandlers['onTogglePower']>(),
     onCancel: vi.fn<InputHandlers['onCancel']>(),
   };
 }
@@ -203,6 +204,12 @@ describe('InputAdapter', () => {
     it('toggles the factorisation view with T', () => {
       window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyT' }));
       expect(handlers.onToggleFactor).toHaveBeenCalledTimes(1);
+    });
+
+    it('toggles the power overlay with P', () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyP' }));
+      expect(handlers.onTogglePower).toHaveBeenCalledTimes(1);
+      expect(handlers.onToggleFactor).not.toHaveBeenCalled();
     });
 
     it('keeps R on the building, not the camera', () => {
