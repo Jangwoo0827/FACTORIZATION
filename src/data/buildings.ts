@@ -161,6 +161,31 @@ export function displayName(def: BuildingDef): string {
   return tier === undefined ? def.name : `${def.name} Mk${tier}`;
 }
 
+/** A tab of the build bar: what it is called and which buildings it holds, in order. */
+export interface BuildCategory {
+  readonly id: string;
+  readonly label: string;
+  readonly icon: string;
+  readonly defs: readonly string[];
+}
+
+/**
+ * The build bar's tabs. Grouped by what the player is trying to do rather than by
+ * tier, so a Mk2 sits next to its Mk1. Every buildable building is in exactly one
+ * (a test keeps it that way, so a new building cannot silently go missing from the bar).
+ */
+export const BUILD_CATEGORIES: readonly BuildCategory[] = [
+  { id: 'logistics', label: '물류', icon: '➜', defs: ['conveyor', 'splitter', 'tunnel-in', 'tunnel-out'] },
+  { id: 'mining', label: '채굴', icon: '⛏', defs: ['miner', 'miner-mk2'] },
+  { id: 'production', label: '생산', icon: '⚙', defs: ['smelter', 'smelter-mk2', 'assembler', 'assembler-mk2'] },
+  { id: 'power', label: '전력', icon: '⚡', defs: ['generator', 'pole', 'pole-long'] },
+];
+
+/** The tab a building is in, or undefined for one the player cannot build. */
+export function categoryOf(defId: string): BuildCategory | undefined {
+  return BUILD_CATEGORIES.find((c) => c.defs.includes(defId));
+}
+
 /** What the build bar offers: everything except things the game places itself. */
 export const BUILDABLE_DEFS: readonly BuildingDef[] = BUILDING_DEFS.filter(
   (def) => def.buildable !== false,

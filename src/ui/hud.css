@@ -715,43 +715,158 @@ body {
   display: none;
 }
 
+/* The build bar (GDD 11.1): category tabs over a sideways-scrolling row of cards, in
+   the manner of Roblox's Theme Park Tycoon. Tabs keep the row short enough to scan;
+   scrolling keeps it one row high however many buildings a tab holds. */
 .hud__buildbar {
   pointer-events: auto;
   display: flex;
-  gap: 8px;
-  padding: 8px;
+  flex-direction: column;
+  width: min(100%, 980px);
   max-width: 100%;
-  overflow-x: auto;
-  scrollbar-width: none;
   background: var(--panel);
   border: 1px solid var(--panel-border);
   border-radius: var(--radius);
+  overflow: hidden;
 }
 
-.hud__buildbar::-webkit-scrollbar {
+.buildbar__tabs {
+  display: flex;
+  gap: 2px;
+  padding: 6px 8px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.buildbar__tabs::-webkit-scrollbar {
   display: none;
 }
 
-.tool {
+.buildbar__tab {
   flex: 0 0 auto;
-  min-width: 72px;
-  min-height: var(--touch);
-  display: grid;
-  grid-template-columns: auto 1fr;
-  grid-template-rows: auto auto;
+  display: flex;
   align-items: center;
-  gap: 2px 8px;
-  padding: 6px 10px;
+  gap: 6px;
+  padding: 7px 14px 8px;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  /* Sits on the row's bottom border so the active tab reads as joined to the cards. */
+  margin-bottom: -1px;
+}
+
+.buildbar__tab:hover {
   color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.buildbar__tab.is-active {
+  color: var(--text);
+  background: rgba(88, 178, 232, 0.14);
+  border-color: var(--panel-border);
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.buildbar__tab-icon {
+  font-size: 15px;
+}
+
+.buildbar__tab-count {
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+}
+
+.buildbar__tab--locked {
+  opacity: 0.55;
+}
+
+.buildbar__row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  padding: 8px;
+}
+
+.buildbar__items {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x proximity;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(140, 170, 190, 0.35) transparent;
+  cursor: grab;
+}
+
+.buildbar__items.is-dragging {
+  cursor: grabbing;
+  scroll-snap-type: none;
+}
+
+.buildbar__items.is-dragging .tool {
+  pointer-events: none;
+}
+
+.buildbar__page {
+  display: flex;
+  gap: 8px;
+  padding-bottom: 4px;
+}
+
+.buildbar__arrow {
+  flex: 0 0 auto;
+  width: 28px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.buildbar__arrow:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.buildbar__arrow:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* A card: a coloured tile with the footprint on it, then the name and the price. */
+.tool {
+  position: relative;
+  flex: 0 0 auto;
+  width: 112px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 6px;
+  color: var(--text);
+  text-align: left;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 10px;
   cursor: pointer;
   font-family: inherit;
+  scroll-snap-align: start;
 }
 
 .tool:hover {
   background: rgba(255, 255, 255, 0.09);
+  border-color: var(--panel-border);
 }
 
 .tool.is-active {
@@ -760,10 +875,20 @@ body {
 }
 
 .tool__swatch {
-  grid-row: 1 / 3;
-  width: 18px;
-  height: 18px;
-  border-radius: 4px;
+  display: grid;
+  place-items: center;
+  height: 46px;
+  border-radius: 7px;
+  box-shadow: inset 0 -6px 0 rgba(0, 0, 0, 0.18);
+}
+
+.tool__footprint {
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 999px;
 }
 
 .tool__swatch--erase {
@@ -772,15 +897,34 @@ body {
 
 .tool__name {
   font-size: 13px;
-  text-align: left;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tool__size {
   font-size: 11px;
+  line-height: 1.3;
   color: var(--text-dim);
-  text-align: left;
   white-space: normal;
-  max-width: 130px;
+}
+
+.tool__lock {
+  display: none;
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  font-size: 13px;
+}
+
+.tool--locked .tool__lock {
+  display: block;
+}
+
+.tool--erase {
+  flex: 0 0 auto;
+  width: 96px;
 }
 
 /* A building the current stock cannot pay for: still selectable (the ghost then says
@@ -808,7 +952,7 @@ body {
   }
 
   .tool {
-    min-width: 84px;
+    width: 124px;
   }
 }
 
@@ -820,7 +964,11 @@ body {
     max-width: 45vw;
   }
 
-  .tool__size {
+  .tool {
+    width: 96px;
+  }
+
+  .buildbar__tab-label {
     display: none;
   }
 }

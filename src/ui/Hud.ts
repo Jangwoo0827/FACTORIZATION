@@ -8,7 +8,7 @@
  */
 
 import type { Vec2 } from '../core/grid';
-import { displayName } from '../data/buildings';
+import { BUILD_CATEGORIES, categoryOf, displayName, type BuildCategory } from '../data/buildings';
 import { itemName } from '../data/items';
 import type { BuildingDef, Rotation } from '../sim/types';
 
@@ -94,6 +94,14 @@ const ROTATION_LABEL = ['+X', '+Z', '-X', '-Z'] as const;
 
 export class Hud {
   private readonly buttons = new Map<string, HTMLButtonElement>();
+  /** One tab button and one page of cards per category. */
+  private readonly tabs = new Map<string, HTMLButtonElement>();
+  private readonly pages = new Map<string, HTMLElement>();
+  private activeTab = '';
+  private items!: HTMLElement;
+  private arrowLeft!: HTMLButtonElement;
+  private arrowRight!: HTMLButtonElement;
+  private unlocked: ReadonlySet<string> | null = null;
   private readonly statusEl: HTMLElement;
   private readonly detailEl: HTMLElement;
   private readonly problemEl: HTMLElement;
@@ -113,7 +121,11 @@ export class Hud {
     output: HTMLElement;
   } | null = null;
 
-  constructor(defs: readonly BuildingDef[], private readonly callbacks: HudCallbacks) {
+  constructor(
+    defs: readonly BuildingDef[],
+    private readonly callbacks: HudCallbacks,
+    private readonly categories: readonly BuildCategory[] = BUILD_CATEGORIES,
+  ) {
     this.statusEl = requireElement('hud-status');
     this.detailEl = requireElement('hud-detail');
     this.problemEl = requireElement('hud-problem');
@@ -126,18 +138,19 @@ export class Hud {
     this.powerEl = requireElement('hud-power');
 
     this.buildBar.replaceChildren();
-    for (const def of defs) {
-      this.buildBar.appendChild(this.createBuildButton(def));
-    }
-    this.buildBar.appendChild(this.createEraseButton());
+    this.buildBuildBar(defs);
 
     this.controls.addEventListener('click', this.onControlClick);
+    window.addEventListener('resize', this.updateArrows);
   }
 
   destroy(): void {
     this.controls.removeEventListener('click', this.onControlClick);
+    window.removeEventListener('resize', this.updateArrows);
     this.buildBar.replaceChildren();
     this.buttons.clear();
+    this.tabs.clear();
+    this.pages.clear();
   }
 
   setSelection(selected: string | 'erase' | null): void {
@@ -146,7 +159,159 @@ export class Hud {
       button.classList.toggle('is-active', active);
       button.setAttribute('aria-pressed', String(active));
     }
+    // A building picked some other way (the eyedropper) brings its tab to the front.
+    const category = selected && selected !== 'erase' ? categoryOf(selected) : undefined;
+    if (category && category.id !== this.activeTab) this.showTab(category.id);
+    if (category) this.buttons.get(selected!)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }
+
+  /** Which build-bar tab is showing. */
+  get currentTab(): string {
+    return this.activeTab;
+  }
+
+  showTab(id: string): void {
+    if (!this.pages.has(id)) return;
+    this.activeTab = id;
+    for (const [tabId, page] of this.pages) page.hidden = tabId !== id;
+    for (const [tabId, tab] of this.tabs) {
+      const on = tabId === id;
+      tab.classList.toggle('is-active', on);
+      tab.setAttribute('aria-selected', String(on));
+    }
+    this.items.scrollLeft = 0;
+    this.updateArrows();
+  }
+
+  /**
+   * Tabs above, a scrolling row of cards below, and the demolish button pinned at
+   * the end so it is never scrolled out of reach (GDD 12.2).
+   */
+  private buildBuildBar(defs: readonly BuildingDef[]): void {
+    const byId = new Map(defs.map((d) => [d.id, d]));
+
+    const tabRow = document.createElement('div');
+    tabRow.className = 'buildbar__tabs';
+    tabRow.setAttribute('role', 'tablist');
+
+    const row = document.createElement('div');
+    row.className = 'buildbar__row';
+
+    this.items = document.createElement('div');
+    this.items.className = 'buildbar__items';
+
+    for (const category of this.categories) {
+      const tab = document.createElement('button');
+      tab.type = 'button';
+      tab.className = 'buildbar__tab';
+      tab.setAttribute('role', 'tab');
+      tab.innerHTML = `<span class="buildbar__tab-icon"></span><span class="buildbar__tab-label"></span><span class="buildbar__tab-count"></span>`;
+      tab.querySelector('.buildbar__tab-icon')!.textContent = category.icon;
+      tab.querySelector('.buildbar__tab-label')!.textContent = category.label;
+      tab.addEventListener('click', () => this.showTab(category.id));
+      this.tabs.set(category.id, tab);
+      tabRow.appendChild(tab);
+
+      const page = document.createElement('div');
+      page.className = 'buildbar__page';
+      for (const id of category.defs) {
+        const def = byId.get(id);
+        if (def) page.appendChild(this.createBuildButton(def));
+      }
+      this.pages.set(category.id, page);
+      this.items.appendChild(page);
+    }
+
+    const arrow = (label: string, direction: -1 | 1): HTMLButtonElement => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'buildbar__arrow';
+      b.textContent = label;
+      b.setAttribute('aria-label', direction < 0 ? '왼쪽으로 넘기기' : '오른쪽으로 넘기기');
+      b.addEventListener('click', () =>
+        this.items.scrollBy({ left: direction * this.items.clientWidth * 0.8, behavior: 'smooth' }),
+      );
+      return b;
+    };
+    this.arrowLeft = arrow('◀', -1);
+    this.arrowRight = arrow('▶', 1);
+
+    this.enableScrolling(this.items);
+
+    row.append(this.arrowLeft, this.items, this.arrowRight, this.createEraseButton());
+    this.buildBar.append(tabRow, row);
+
+    const first = this.categories[0];
+    if (first) this.showTab(first.id);
+  }
+
+  /**
+   * The card row scrolls sideways three ways: the mouse wheel (turned sideways, since
+   * most mice only have a vertical one), dragging it, and the arrow buttons.
+   */
+  private enableScrolling(items: HTMLElement): void {
+    items.addEventListener(
+      'wheel',
+      (e) => {
+        if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+        items.scrollLeft += e.deltaY;
+        e.preventDefault();
+      },
+      { passive: false },
+    );
+    items.addEventListener('scroll', this.updateArrows);
+
+    // Drag to scroll. A drag that moved more than a few pixels is not a click, so the
+    // card under the pointer at the end is not selected by accident.
+    let startX = 0;
+    let startScroll = 0;
+    let dragging = false;
+    let moved = false;
+    items.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      dragging = true;
+      moved = false;
+      startX = e.clientX;
+      startScroll = items.scrollLeft;
+    });
+    items.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - startX;
+      if (!moved && Math.abs(dx) > 6) {
+        moved = true;
+        items.setPointerCapture(e.pointerId);
+        items.classList.add('is-dragging');
+      }
+      if (moved) items.scrollLeft = startScroll - dx;
+    });
+    const end = (): void => {
+      dragging = false;
+      items.classList.remove('is-dragging');
+    };
+    items.addEventListener('pointerup', end);
+    items.addEventListener('pointercancel', end);
+    items.addEventListener(
+      'click',
+      (e) => {
+        if (!moved) return;
+        moved = false;
+        e.stopPropagation();
+        e.preventDefault();
+      },
+      true,
+    );
+  }
+
+  /** Arrows only where there is more to see, so they never promise an empty scroll. */
+  private updateArrows = (): void => {
+    if (!this.items) return;
+    const max = this.items.scrollWidth - this.items.clientWidth;
+    this.arrowLeft.disabled = this.items.scrollLeft <= 1;
+    this.arrowRight.disabled = this.items.scrollLeft >= max - 1;
+    const overflow = max > 1;
+    this.arrowLeft.hidden = !overflow;
+    this.arrowRight.hidden = !overflow;
+  };
 
   setStatus(status: HudStatus): void {
     const tile = status.tile ? `${status.tile.x}, ${status.tile.y}` : '—';
@@ -358,6 +523,20 @@ export class Hud {
       if (id === 'erase') continue;
       button.classList.toggle('tool--locked', !unlocked.has(id));
     }
+    // Each tab shows how much of it is open; a tab with nothing open yet is dimmed.
+    const same =
+      this.unlocked !== null &&
+      this.unlocked.size === unlocked.size &&
+      [...unlocked].every((id) => this.unlocked!.has(id));
+    if (same) return;
+    this.unlocked = new Set(unlocked);
+    for (const category of this.categories) {
+      const tab = this.tabs.get(category.id);
+      if (!tab) continue;
+      const open = category.defs.filter((id) => unlocked.has(id)).length;
+      tab.querySelector('.buildbar__tab-count')!.textContent = open === 0 ? '🔒' : `${open}/${category.defs.length}`;
+      tab.classList.toggle('buildbar__tab--locked', open === 0);
+    }
   }
 
   /** The power gauge. Hidden until something on the map makes or uses power. */
@@ -414,13 +593,15 @@ export class Hud {
     button.dataset['defId'] = def.id;
     button.setAttribute('aria-pressed', 'false');
     button.innerHTML =
-      `<span class="tool__swatch" style="background:${hex(def.color)}"></span>` +
+      `<span class="tool__swatch" style="background:${hex(def.color)}"><span class="tool__footprint"></span></span>` +
       `<span class="tool__name"></span>` +
-      `<span class="tool__size"></span>`;
+      `<span class="tool__size"></span>` +
+      `<span class="tool__lock" aria-hidden="true">🔒</span>`;
+    button.querySelector('.tool__footprint')!.textContent = `${def.w}×${def.h}`;
     button.querySelector('.tool__name')!.textContent = displayName(def);
     const price = (def.cost ?? []).map((c) => `${itemName(c.item)} ${c.count}`).join(' · ');
-    button.querySelector('.tool__size')!.textContent = price ? `${def.w}×${def.h} · ${price}` : `${def.w}×${def.h}`;
-    button.title = price ? `건설비: ${price}` : '무료';
+    button.querySelector('.tool__size')!.textContent = price || '무료';
+    button.title = price ? `${displayName(def)} · 건설비: ${price}` : displayName(def);
     button.addEventListener('click', () => {
       const next = this.buttons.get(def.id)?.classList.contains('is-active') ? null : def.id;
       this.callbacks.onSelectBuilding(next);
@@ -435,9 +616,10 @@ export class Hud {
     button.className = 'tool tool--erase';
     button.setAttribute('aria-pressed', 'false');
     button.innerHTML =
-      `<span class="tool__swatch tool__swatch--erase"></span>` +
+      `<span class="tool__swatch tool__swatch--erase"><span class="tool__footprint">✕</span></span>` +
       `<span class="tool__name">철거</span>` +
-      `<span class="tool__size">드래그</span>`;
+      `<span class="tool__size">우클릭 · 드래그</span>`;
+    button.title = '철거 (우클릭으로도 할 수 있어요)';
     button.addEventListener('click', () => this.callbacks.onSelectErase());
     this.buttons.set('erase', button);
     return button;
