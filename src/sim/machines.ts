@@ -22,6 +22,7 @@ import type { RecipeBook, RecipeDef } from '../factor/recipeBook';
 import type { BeltGrid } from './belts';
 import { emitToPorts, findPorts, type Port } from './ports';
 import { POWER_FULL, type PowerSystem } from './power';
+import { ProductionStats } from './stats';
 import { ITEM_COUNT, type ItemId, type MachineSpec } from './types';
 import type { World } from './world';
 
@@ -74,6 +75,7 @@ export class MachineSystem {
     private readonly belts: BeltGrid,
     private readonly recipes: RecipeBook,
     private readonly power: PowerSystem,
+    private readonly stats: ProductionStats = new ProductionStats(),
   ) {}
 
   get count(): number {
@@ -152,12 +154,16 @@ export class MachineSystem {
           if (m.progress >= m.totalTicks) {
             m.crafting = false;
             m.output++;
+            this.stats.produce(recipe.output);
           }
         }
         // Checked in the same tick a craft finishes, so back-to-back crafts run
         // exactly `totalTicks` apart with no idle tick between them.
         if (!m.crafting && m.output < MACHINE_OUTPUT_CAP && this.hasIngredients(m)) {
-          for (let i = 0; i < ITEM_COUNT; i++) m.inputs[i]! -= m.needs[i]!;
+          for (const { item, count } of recipe.inputs) {
+            m.inputs[item]! -= count;
+            this.stats.consume(item, count);
+          }
           m.crafting = true;
           m.progress = 0;
         }

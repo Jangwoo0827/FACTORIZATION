@@ -32,6 +32,7 @@ function makeHandlers(): MockedHandlers {
     onRedo: vi.fn<InputHandlers['onRedo']>(),
     onToggleFactor: vi.fn<InputHandlers['onToggleFactor']>(),
     onTogglePower: vi.fn<InputHandlers['onTogglePower']>(),
+    onToggleStats: vi.fn<InputHandlers['onToggleStats']>(),
     onCancel: vi.fn<InputHandlers['onCancel']>(),
   };
 }
@@ -210,6 +211,11 @@ describe('InputAdapter', () => {
       window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyP' }));
       expect(handlers.onTogglePower).toHaveBeenCalledTimes(1);
       expect(handlers.onToggleFactor).not.toHaveBeenCalled();
+    });
+
+    it('toggles production statistics with G', () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyG' }));
+      expect(handlers.onToggleStats).toHaveBeenCalledTimes(1);
     });
 
     it('keeps R on the building, not the camera', () => {

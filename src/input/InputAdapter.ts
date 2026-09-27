@@ -40,6 +40,8 @@ export interface InputHandlers {
   onToggleFactor(): void;
   /** P: the power overlay. */
   onTogglePower(): void;
+  /** G: the production statistics panel. */
+  onToggleStats(): void;
   /** Escape: clear the current selection. */
   onCancel(): void;
 }
@@ -304,6 +306,10 @@ export class InputAdapter {
       case 'KeyP':
         e.preventDefault();
         this.handlers.onTogglePower();
+        return;
+      case 'KeyG':
+        e.preventDefault();
+        this.handlers.onToggleStats();
         return;
       case 'Escape':
         e.preventDefault();

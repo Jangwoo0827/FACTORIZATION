@@ -18,6 +18,7 @@ import { MinerSystem } from './miners';
 import { PowerSystem } from './power';
 import { Progress } from './progress';
 import { Sieve } from './sieve';
+import { ProductionStats } from './stats';
 import { isBeltKind, rotatedSize, type ItemId, type PlacedBuilding } from './types';
 import type { World } from './world';
 
@@ -26,6 +27,8 @@ const DT = 1 / SIM_TPS;
 export class Simulation {
   readonly belts: BeltGrid;
   readonly sieve = new Sieve();
+  /** What the factory makes and uses, per item, over the last hour. */
+  readonly stats = new ProductionStats();
   /** Seals opened so far, and so what may be built. */
   readonly progress = new Progress(this.sieve);
   readonly power: PowerSystem;
@@ -47,8 +50,9 @@ export class Simulation {
       this.offer(id, item),
     );
     this.power = new PowerSystem(world);
-    this.miners = new MinerSystem(world, this.belts, this.power);
-    this.machines = new MachineSystem(world, this.belts, recipes, this.power);
+    this.power.onFuelBurnt = (item) => this.stats.consume(item);
+    this.miners = new MinerSystem(world, this.belts, this.power, this.stats);
+    this.machines = new MachineSystem(world, this.belts, recipes, this.power, this.stats);
   }
 
   /**
@@ -76,7 +80,10 @@ export class Simulation {
 
     this.tick++;
     const endOfSecond = this.tick % SIM_TPS === 0;
-    if (endOfSecond) this.sieve.recordSecond();
+    if (endOfSecond) {
+      this.sieve.recordSecond();
+      this.stats.recordSecond();
+    }
     this.progress.step(endOfSecond);
   }
 

@@ -215,6 +215,46 @@ body {
   background: rgba(88, 178, 232, 0.22);
 }
 
+.stats__tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.stats__tab {
+  pointer-events: auto;
+  padding: 3px 10px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.stats__tab.is-active {
+  border-color: var(--accent);
+  background: rgba(88, 178, 232, 0.2);
+}
+
+.stats__swatch {
+  display: inline-block;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.stats__net--short {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.stats__spark polyline {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.2;
+}
+
 .seal__done {
   font-weight: 600;
 }

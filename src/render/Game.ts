@@ -76,6 +76,7 @@ import { Heartbeat } from '../runtime/heartbeat';
 import { FactorPanel } from '../ui/FactorPanel';
 import { Hud, type InspectorLive, type RecipeChoice, type StockRow } from '../ui/Hud';
 import { SealPanel } from '../ui/SealPanel';
+import { StatsPanel } from '../ui/StatsPanel';
 import { CameraRig } from './CameraRig';
 import { GhostView } from './GhostView';
 import { ItemView } from './ItemView';
@@ -114,6 +115,7 @@ export class Game {
   private readonly machineStatus: MachineStatusView;
   private readonly factorPanel: FactorPanel;
   private readonly sealPanel: SealPanel;
+  private readonly statsPanel: StatsPanel;
   private readonly powerOverlay: PowerOverlayView;
   /** P toggles this. The overlay also shows on its own while a power building is held. */
   private powerOverlayOn = false;
@@ -205,6 +207,7 @@ export class Game {
     this.machineStatus = new MachineStatusView(this.scene, this.sim);
     this.factorPanel = new FactorPanel(document.getElementById('hud-factor')!, Item.GateComponent);
     this.sealPanel = new SealPanel(document.getElementById('hud-seal')!);
+    this.statsPanel = new StatsPanel(document.getElementById('hud-stats')!);
     this.powerOverlay = new PowerOverlayView(this.scene, this.world, this.sim.power);
     this.ghost = new GhostView(this.scene);
     this.sim.progress.onComplete = (seal) => this.announceSeal(seal);
@@ -216,6 +219,7 @@ export class Game {
       onSelectErase: () => this.toggleErase(),
       onToggleFactor: () => this.factorPanel.toggle(),
       onTogglePower: () => this.togglePowerOverlay(),
+      onToggleStats: () => this.toggleStats(),
       onRotate: () => this.rotateBuilding(),
       onRotateView: (delta) => {
         this.rig.rotateYaw(delta * YAW_STEP);
@@ -252,6 +256,7 @@ export class Game {
         onRedo: () => this.redo(),
         onToggleFactor: () => this.factorPanel.toggle(),
         onTogglePower: () => this.togglePowerOverlay(),
+        onToggleStats: () => this.toggleStats(),
         onCancel: () => this.clearTool(),
       },
     });
@@ -294,6 +299,7 @@ export class Game {
         this.machineStatus.update();
         this.refreshPowerOverlay();
         this.refreshStock();
+        this.statsPanel.update(this.sim.stats);
         this.refreshHud();
       },
       /** Belts with their direction, as `[x, y, dir]`. */
@@ -338,7 +344,8 @@ export class Game {
       machineStatus: (id: number): string | null => this.sim.machines.info(id)?.status ?? null,
       /** Opens the panel as a click on the machine would. */
       selectMachine: (id: number): void => this.selectMachine(id),
-      panelText: (which: 'inspector' | 'factor'): string =>
+      toggleStats: (): void => this.toggleStats(),
+      panelText: (which: 'inspector' | 'factor' | 'stats' | 'seal' | 'power'): string =>
         document.getElementById(`hud-${which}`)?.innerText.replace(/\n+/g, ' | ') ?? '',
       lights: (): number => this.machineStatus.count,
       /** Line segments the power overlay draws now; 0 while it is hidden. */
@@ -427,6 +434,7 @@ export class Game {
     this.itemView.update(this.clock.alpha);
     this.machineStatus.update();
     this.refreshPowerOverlay();
+    if (this.statsPanel.needsRedraw) this.statsPanel.update(this.sim.stats);
 
     this.worldView.setGridVisible(this.toolActive() && this.rig.zoom <= GRID_MAX_VIEW_SIZE);
     this.renderer.render(this.scene, this.rig.camera);
@@ -471,6 +479,7 @@ export class Game {
       this.lastHudRefresh = now;
       this.refreshStock();
       this.refreshInspector();
+      this.statsPanel.update(this.sim.stats);
       // Hover text shows live values (a miner's buffer, say), so it needs re-reading
       // even when the cursor has not moved.
       this.refreshHud();
@@ -527,6 +536,11 @@ export class Game {
         ? { ...power, stranded, overlayOn: this.powerOverlayOn }
         : null,
     );
+  }
+
+  private toggleStats(): void {
+    this.statsPanel.toggle();
+    this.statsPanel.update(this.sim.stats);
   }
 
   private togglePowerOverlay(): void {

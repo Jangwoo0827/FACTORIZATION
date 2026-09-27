@@ -47,6 +47,7 @@ export interface HudCallbacks {
   onSelectBuilding(defId: string | null): void;
   onToggleFactor(): void;
   onTogglePower(): void;
+  onToggleStats(): void;
   onSelectErase(): void;
   onRotate(): void;
   onRotateView(delta: -1 | 1): void;
@@ -453,6 +454,9 @@ export class Hud {
         return;
       case 'power':
         this.callbacks.onTogglePower();
+        return;
+      case 'stats':
+        this.callbacks.onToggleStats();
         return;
       case 'view-left':
         this.callbacks.onRotateView(-1);

@@ -14,6 +14,7 @@ import { MINER_BUFFER, MINER_MK1_RATE_PER_TILE } from '../config';
 import type { BeltGrid } from './belts';
 import { emitToPorts, findPorts, type Port } from './ports';
 import { POWER_FULL, type PowerSystem } from './power';
+import { ProductionStats } from './stats';
 import { Ore, ITEM_COUNT, rotatedSize, type ItemId, type PlacedBuilding } from './types';
 import type { World } from './world';
 
@@ -44,6 +45,7 @@ export class MinerSystem {
     private readonly world: World,
     private readonly belts: BeltGrid,
     private readonly power: PowerSystem,
+    private readonly stats: ProductionStats = new ProductionStats(),
   ) {}
 
   get count(): number {
@@ -97,6 +99,7 @@ export class MinerSystem {
           const take = Math.min(whole, MINER_BUFFER - m.stored);
           m.stored += take;
           m.progress -= take;
+          this.stats.produce(m.item, take);
         }
       }
       // A full buffer stops the clock instead of banking progress, so a miner that
