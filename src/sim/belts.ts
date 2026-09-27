@@ -39,6 +39,23 @@ const NONE = 0;
 const BELT = 1;
 const SPLITTER = 2;
 
+/**
+ * What one belt tile or splitter is carrying, for a save. Positions are kept exactly
+ * (float32 round-trips through JSON unchanged), so a loaded belt moves exactly as the
+ * saved one would have.
+ */
+export interface BeltTileState {
+  /** Tile index. */
+  readonly t: number;
+  /** Per item, front first: position, previous position, item id, entry side. */
+  readonly p: readonly number[];
+  readonly q: readonly number[];
+  readonly i: readonly number[];
+  readonly l: readonly number[];
+  /** A splitter's held item, the side it came in by, and whose turn is next. */
+  readonly s?: readonly [number, number, number];
+}
+
 export class BeltGrid {
   readonly size: number;
   readonly tileCount: number;
@@ -483,6 +500,55 @@ export class BeltGrid {
     if (this.kind[tile] === SPLITTER) return this.splitterIn(tile, item, lat);
     if (this.dir[tile]! < 0) return false;
     return this.insert(tile, item, 0, 0, lat);
+  }
+
+  // ------------------------------------------------------------ saving
+
+  /** Everything the belts carry. Topology is not included: it is rebuilt from the world. */
+  exportState(): BeltTileState[] {
+    const out: BeltTileState[] = [];
+    for (let t = 0; t < this.tileCount; t++) {
+      if (this.beltId[t] === -1) continue;
+      const c = this.count[t]!;
+      const splitter = this.kind[t] === SPLITTER;
+      if (c === 0 && !splitter) continue;
+      const base = t * SLOTS;
+      const state: BeltTileState = {
+        t,
+        p: Array.from(this.pos.subarray(base, base + c)),
+        q: Array.from(this.prev.subarray(base, base + c)),
+        i: Array.from(this.item.subarray(base, base + c)),
+        l: Array.from(this.lat.subarray(base, base + c)),
+        ...(splitter ? { s: [this.splitterItem[t]!, this.splitterFrom[t]!, this.splitterNext[t]!] as const } : {}),
+      };
+      out.push(state);
+    }
+    return out;
+  }
+
+  /**
+   * Puts saved contents back. Call after the topology has been rebuilt from the same
+   * world. A tile that is no longer a belt is skipped rather than trusted.
+   */
+  importState(states: readonly BeltTileState[]): void {
+    for (const st of states) {
+      const t = st.t;
+      if (t < 0 || t >= this.tileCount || this.beltId[t] === -1) continue;
+      const c = Math.min(SLOTS, st.p.length);
+      const base = t * SLOTS;
+      for (let k = 0; k < c; k++) {
+        this.pos[base + k] = st.p[k]!;
+        this.prev[base + k] = st.q[k]!;
+        this.item[base + k] = st.i[k]!;
+        this.lat[base + k] = st.l[k]!;
+      }
+      this.count[t] = c;
+      if (st.s && this.kind[t] === SPLITTER) {
+        this.splitterItem[t] = st.s[0];
+        this.splitterFrom[t] = st.s[1];
+        this.splitterNext[t] = st.s[2];
+      }
+    }
   }
 
   // ------------------------------------------------------------ inspection

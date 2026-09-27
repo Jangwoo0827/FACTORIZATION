@@ -183,6 +183,23 @@ export class PowerSystem {
     return this.grids.find((g) => g.poles.includes(id)) ?? null;
   }
 
+  /** `[id, stored, burnLeft, burning]` for every generator, for a save. */
+  exportState(): [number, number, number, boolean][] {
+    return [...this.generators.values()].map((g) => [g.id, g.stored, g.burnLeft, g.burning]);
+  }
+
+  /** Restores what `exportState` saved. Call after `rebuild`; re-settles grid levels. */
+  importState(states: readonly (readonly [number, number, number, boolean])[]): void {
+    for (const [id, stored, burnLeft, burning] of states) {
+      const g = this.generators.get(id);
+      if (!g) continue;
+      g.stored = stored;
+      g.burnLeft = burnLeft;
+      g.burning = burning;
+    }
+    this.settle();
+  }
+
   /** Whether a fuel item is welcome at a generator right now. */
   accept(id: number, item: ItemId): boolean {
     const gen = this.generators.get(id);

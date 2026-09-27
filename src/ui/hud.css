@@ -238,6 +238,45 @@ body {
   font-weight: 600;
 }
 
+.save__buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 6px 0;
+}
+
+.save__button {
+  pointer-events: auto;
+  padding: 6px 10px;
+  text-align: left;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.save__button:hover {
+  border-color: var(--accent);
+}
+
+.save__button--danger {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.save__note {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+.save__status--error {
+  color: var(--danger);
+}
+
 .stats__tabs {
   display: flex;
   gap: 4px;

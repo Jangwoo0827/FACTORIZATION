@@ -67,6 +67,16 @@ export interface MachineState {
   ports: Port[];
 }
 
+export interface MachineSave {
+  readonly id: number;
+  readonly inputs: readonly (readonly [number, number])[];
+  readonly crafting: boolean;
+  readonly progress: number;
+  readonly output: number;
+  readonly next: number;
+  readonly credit: number;
+}
+
 export class MachineSystem {
   private machines = new Map<number, MachineState>();
 
@@ -80,6 +90,33 @@ export class MachineSystem {
 
   get count(): number {
     return this.machines.size;
+  }
+
+  /** Buffers and progress of every machine, for a save. Inputs are `[item, count]` pairs. */
+  exportState(): MachineSave[] {
+    return [...this.machines.values()].map((m) => {
+      const inputs: [number, number][] = [];
+      for (let i = 0; i < ITEM_COUNT; i++) if (m.inputs[i]! > 0) inputs.push([i, m.inputs[i]!]);
+      return { id: m.id, inputs, crafting: m.crafting, progress: m.progress, output: m.output, next: m.next, credit: m.credit };
+    });
+  }
+
+  /**
+   * Restores what `exportState` saved. Call after `rebuild` on the same world, so each
+   * machine already has the recipe it was saved with.
+   */
+  importState(states: readonly MachineSave[]): void {
+    for (const st of states) {
+      const m = this.machines.get(st.id);
+      if (!m) continue;
+      m.inputs.fill(0);
+      for (const [item, count] of st.inputs) if (item >= 0 && item < ITEM_COUNT) m.inputs[item] = count;
+      m.crafting = st.crafting;
+      m.progress = st.progress;
+      m.output = st.output;
+      m.next = st.next < m.ports.length ? st.next : 0;
+      m.credit = st.credit;
+    }
   }
 
   info(id: number): Readonly<MachineState> | null {

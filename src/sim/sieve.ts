@@ -21,11 +21,39 @@ import { ITEM_COUNT, type Cost, type ItemId } from './types';
  */
 const HISTORY_SNAPSHOTS = 61;
 
+export interface SieveState {
+  readonly stock: readonly number[];
+  readonly delivered: readonly number[];
+  readonly history: readonly (readonly number[])[];
+}
+
 export class Sieve {
   readonly stock = new Int32Array(ITEM_COUNT);
   readonly delivered = new Float64Array(ITEM_COUNT);
 
   private readonly history: Float64Array[] = [];
+
+  /** Stock, deliveries and the last minute of snapshots, for a save. */
+  exportState(): SieveState {
+    return {
+      stock: Array.from(this.stock),
+      delivered: Array.from(this.delivered),
+      history: this.history.map((h) => Array.from(h)),
+    };
+  }
+
+  importState(state: SieveState): void {
+    this.stock.fill(0);
+    this.delivered.fill(0);
+    state.stock.forEach((v, i) => i < ITEM_COUNT && (this.stock[i] = v));
+    state.delivered.forEach((v, i) => i < ITEM_COUNT && (this.delivered[i] = v));
+    this.history.length = 0;
+    for (const h of state.history.slice(-HISTORY_SNAPSHOTS)) {
+      const snap = new Float64Array(ITEM_COUNT);
+      h.forEach((v, i) => i < ITEM_COUNT && (snap[i] = v));
+      this.history.push(snap);
+    }
+  }
 
   receive(item: ItemId): void {
     this.delivered[item]!++;

@@ -17,6 +17,14 @@ import {
 
 const EMPTY = -1;
 
+export interface WorldState {
+  readonly nextId: number;
+  /** `[id, defId, x, y, rot]`, in placement order. */
+  readonly buildings: readonly (readonly [number, string, number, number, number])[];
+  /** `[buildingId, item]`. */
+  readonly recipes: readonly (readonly [number, number])[];
+}
+
 export class World {
   readonly size: number;
   readonly terrain: Uint8Array;
@@ -43,6 +51,34 @@ export class World {
     this.terrain = new Uint8Array(size * size);
     this.ore = new Uint8Array(size * size);
     this.occupancy = new Int32Array(size * size).fill(EMPTY);
+  }
+
+  /**
+   * Buildings in the order they were placed, the next id, and every machine's recipe.
+   * Terrain and ore are not included: they come back from the map seed.
+   */
+  exportState(): WorldState {
+    return {
+      nextId: this.nextId,
+      buildings: [...this.placed.values()].map((b) => [b.id, b.defId, b.x, b.y, b.rot] as const),
+      recipes: [...this.machineRecipes],
+    };
+  }
+
+  /**
+   * Puts saved buildings back into a freshly generated world, keeping their ids and
+   * their order. Order matters: rules like underpass pairing go by build order.
+   * Returns how many could not be placed (the map they were saved on differed).
+   */
+  importState(state: WorldState): number {
+    let failed = 0;
+    for (const [id, defId, x, y, rot] of state.buildings) {
+      if (!this.insert({ id, defId, x, y, rot: rot as Rotation })) failed++;
+    }
+    for (const [id, item] of state.recipes) this.machineRecipes.set(id, item);
+    this.nextId = Math.max(this.nextId, state.nextId);
+    this.revisionCounter++;
+    return failed;
   }
 
   get buildingCount(): number {

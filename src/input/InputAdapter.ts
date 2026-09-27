@@ -42,6 +42,8 @@ export interface InputHandlers {
   onTogglePower(): void;
   /** G: the production statistics panel. */
   onToggleStats(): void;
+  /** Ctrl+S: save now. */
+  onSave(): void;
   /** Escape: clear the current selection. */
   onCancel(): void;
 }
@@ -273,7 +275,10 @@ export class InputAdapter {
   private onKeyDown = (e: KeyboardEvent): void => {
     if (isTextEntry(e.target)) return;
 
-    if (PAN_KEYS[e.code] || YAW_KEYS[e.code]) {
+    // A shortcut with Ctrl is never a held movement key: Ctrl+S is "save", not "pan
+    // south", and must not leave S stuck in the held set either.
+    const ctrlHeld = e.ctrlKey || e.metaKey;
+    if (!ctrlHeld && (PAN_KEYS[e.code] || YAW_KEYS[e.code])) {
       this.heldKeys.add(e.code);
       e.preventDefault();
       return;
@@ -290,6 +295,12 @@ export class InputAdapter {
     if (ctrl && e.code === 'KeyY') {
       e.preventDefault();
       this.handlers.onRedo();
+      return;
+    }
+    if (ctrl && e.code === 'KeyS') {
+      // Also stops the browser's own "save page" dialog.
+      e.preventDefault();
+      this.handlers.onSave();
       return;
     }
     if (ctrl) return;

@@ -33,6 +33,7 @@ function makeHandlers(): MockedHandlers {
     onToggleFactor: vi.fn<InputHandlers['onToggleFactor']>(),
     onTogglePower: vi.fn<InputHandlers['onTogglePower']>(),
     onToggleStats: vi.fn<InputHandlers['onToggleStats']>(),
+    onSave: vi.fn<InputHandlers['onSave']>(),
     onCancel: vi.fn<InputHandlers['onCancel']>(),
   };
 }
@@ -216,6 +217,15 @@ describe('InputAdapter', () => {
     it('toggles production statistics with G', () => {
       window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyG' }));
       expect(handlers.onToggleStats).toHaveBeenCalledTimes(1);
+    });
+
+    it('saves with Ctrl+S and keeps the browser from saving the page', () => {
+      const e = new KeyboardEvent('keydown', { code: 'KeyS', ctrlKey: true, cancelable: true });
+      window.dispatchEvent(e);
+      expect(handlers.onSave).toHaveBeenCalledTimes(1);
+      expect(e.defaultPrevented).toBe(true);
+      // S is also "pan south"; with Ctrl it must not start the camera moving.
+      expect(adapter.keyboardPan()).toEqual({ x: 0, y: 0 });
     });
 
     it('keeps R on the building, not the camera', () => {

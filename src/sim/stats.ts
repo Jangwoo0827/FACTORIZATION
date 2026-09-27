@@ -20,6 +20,16 @@ import { ITEM_COUNT, type ItemId } from './types';
 /** An hour of seconds, plus one: N snapshots span N-1 seconds. */
 export const STATS_HISTORY = 3601;
 
+export interface StatsState {
+  readonly produced: readonly number[];
+  readonly consumed: readonly number[];
+  /** Snapshots recorded, oldest first, at most an hour's worth. */
+  readonly snapshots: number;
+  /** Per item that was ever made or used: its snapshots, oldest first. Others are all zero. */
+  readonly producedSeries: readonly (readonly [number, readonly number[]])[];
+  readonly consumedSeries: readonly (readonly [number, readonly number[]])[];
+}
+
 export class ProductionStats {
   readonly produced = new Float64Array(ITEM_COUNT);
   readonly consumed = new Float64Array(ITEM_COUNT);
@@ -29,6 +39,46 @@ export class ProductionStats {
   private readonly consumedRing = new Float64Array(STATS_HISTORY * ITEM_COUNT);
   /** Snapshots taken so far, which keeps counting past the ring's size. */
   private recorded = 0;
+
+  /**
+   * The totals and the recorded history, for a save. Only items that were ever made or
+   * used are written; early in a game that is most of the saving.
+   */
+  exportState(): StatsState {
+    const n = Math.min(this.recorded, STATS_HISTORY);
+    const series = (ring: Float64Array) =>
+      this.activeItems().map((item) => {
+        const values: number[] = [];
+        for (let k = n - 1; k >= 0; k--) values.push(this.snapshotBack(ring, item, k) ?? 0);
+        return [item, values] as const;
+      });
+    return {
+      produced: Array.from(this.produced),
+      consumed: Array.from(this.consumed),
+      snapshots: n,
+      producedSeries: series(this.producedRing),
+      consumedSeries: series(this.consumedRing),
+    };
+  }
+
+  importState(state: StatsState): void {
+    this.produced.fill(0);
+    this.consumed.fill(0);
+    this.producedRing.fill(0);
+    this.consumedRing.fill(0);
+    state.produced.forEach((v, i) => i < ITEM_COUNT && (this.produced[i] = v));
+    state.consumed.forEach((v, i) => i < ITEM_COUNT && (this.consumed[i] = v));
+    const n = Math.min(state.snapshots, STATS_HISTORY);
+    const write = (ring: Float64Array, series: StatsState['producedSeries']) => {
+      for (const [item, values] of series) {
+        if (item < 0 || item >= ITEM_COUNT) continue;
+        for (let k = 0; k < n; k++) ring[k * ITEM_COUNT + item] = values[k] ?? 0;
+      }
+    };
+    write(this.producedRing, state.producedSeries);
+    write(this.consumedRing, state.consumedSeries);
+    this.recorded = n;
+  }
 
   produce(item: ItemId, count = 1): void {
     this.produced[item]! += count;

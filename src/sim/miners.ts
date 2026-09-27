@@ -52,6 +52,22 @@ export class MinerSystem {
     return this.miners.size;
   }
 
+  /** `[id, progress, stored, next]` for every miner, for a save. */
+  exportState(): [number, number, number, number][] {
+    return [...this.miners.values()].map((m) => [m.id, m.progress, m.stored, m.next]);
+  }
+
+  /** Restores what `exportState` saved. Call after `rebuild` on the same world. */
+  importState(states: readonly (readonly number[])[]): void {
+    for (const [id, progress, stored, next] of states) {
+      const m = this.miners.get(id!);
+      if (!m) continue;
+      m.progress = progress!;
+      m.stored = stored!;
+      m.next = next! < m.outputs.length ? next! : 0;
+    }
+  }
+
   info(id: number): Readonly<MinerState> | null {
     return this.miners.get(id) ?? null;
   }

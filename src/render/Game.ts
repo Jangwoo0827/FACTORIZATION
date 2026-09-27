@@ -76,6 +76,9 @@ import { Heartbeat } from '../runtime/heartbeat';
 import { COMPARE_WINDOW, FactorPanel } from '../ui/FactorPanel';
 import { Hud, type InspectorLive, type RecipeChoice, type StockRow } from '../ui/Hud';
 import { SealPanel } from '../ui/SealPanel';
+import { SavePanel } from '../ui/SavePanel';
+import { clearAutosave, writeAutosave, writeAutosaveNow } from '../runtime/storage';
+import { createSave, parseSave, restoreSave, SaveError, type SaveData } from '../sim/save';
 import { StatsPanel } from '../ui/StatsPanel';
 import { CameraRig } from './CameraRig';
 import { GhostView } from './GhostView';
@@ -93,6 +96,15 @@ const HUD_REFRESH_MS = 250;
 /** How often the frame-rate readout is recomputed, in milliseconds. */
 const PERF_REFRESH_MS = 500;
 const SIM_DT = 1 / SIM_TPS;
+/** How often the game saves itself while running (GDD 12.3). */
+const AUTOSAVE_MS = 60_000;
+
+export interface GameOptions {
+  /** A game to continue. Absent or null starts a new one. */
+  save?: SaveData | null;
+  /** Something to tell the player on start, e.g. that the autosave could not be read. */
+  notice?: string | null;
+}
 
 const MACHINE_STATUS_TEXT: Readonly<Record<MachineStatus, string>> = {
   'no-recipe': '레시피 없음',
@@ -115,6 +127,13 @@ export class Game {
   private readonly machineStatus: MachineStatusView;
   private readonly factorPanel: FactorPanel;
   private readonly sealPanel: SealPanel;
+  private readonly savePanel: SavePanel;
+  /** The map seed, so a save can regenerate the same terrain. */
+  private readonly seed: number;
+  /** False for the benchmark scene, and once the player has asked to leave this game. */
+  private autosaving: boolean;
+  private lastSavedAt: number | null = null;
+  private autosaveTimer = 0;
   private readonly statsPanel: StatsPanel;
   private readonly powerOverlay: PowerOverlayView;
   /** P toggles this. The overlay also shows on its own while a power building is held. */
@@ -174,7 +193,10 @@ export class Game {
   private perfSimMs = 0;
   private perfSimSteps = 0;
 
-  constructor(private readonly container: HTMLElement) {
+  constructor(
+    private readonly container: HTMLElement,
+    options: GameOptions = {},
+  ) {
     this.renderer = new WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     this.container.appendChild(this.renderer.domElement);
 
@@ -190,13 +212,29 @@ export class Game {
     const bench = params.has('bench');
     this.debug = bench || params.has('debug');
 
-    this.world = bench ? createBenchWorld(MAP_SIZE) : generateWorld(MAP_SIZE, DEFAULT_SEED, DEF_MAP);
-    placeHub(this.world);
-    this.sim = new Simulation(this.world);
-    this.builder = new Builder(this.world, this.sim.sieve, this.sim.progress);
-    if (!bench) {
-      for (const { item, count } of STARTING_STOCK) this.sim.sieve.addStock(item, count);
+    const save = bench ? null : (options.save ?? null);
+    this.seed = save?.seed ?? DEFAULT_SEED;
+    this.autosaving = !bench;
+    let startNotice = options.notice ?? null;
+    if (save) {
+      // Continue a saved game: the same map from its seed, then everything built on it.
+      const restored = restoreSave(save, generateWorld, DEF_MAP);
+      this.sim = restored.sim;
+      this.world = restored.sim.world;
+      this.lastSavedAt = save.savedAt;
+      for (const [cls, item] of save.ui?.lastRecipe ?? []) this.lastRecipe.set(cls as MachineClass, item);
+      if (restored.lostBuildings > 0) {
+        startNotice = `불러온 세이브의 건물 ${restored.lostBuildings}개가 지금 맵에 맞지 않아 빠졌습니다.`;
+      }
+    } else {
+      this.world = bench ? createBenchWorld(MAP_SIZE) : generateWorld(MAP_SIZE, this.seed, DEF_MAP);
+      placeHub(this.world);
+      this.sim = new Simulation(this.world);
+      if (!bench) {
+        for (const { item, count } of STARTING_STOCK) this.sim.sieve.addStock(item, count);
+      }
     }
+    this.builder = new Builder(this.world, this.sim.sieve, this.sim.progress);
     if (bench) {
       buildRings(this.world, 5000);
       fillBelts(this.sim, 2);
@@ -211,6 +249,12 @@ export class Game {
     }));
     this.sealPanel = new SealPanel(document.getElementById('hud-seal')!);
     this.statsPanel = new StatsPanel(document.getElementById('hud-stats')!);
+    this.savePanel = new SavePanel(document.getElementById('hud-save')!, {
+      onSaveNow: () => this.saveNow(true),
+      onExport: () => this.exportSave(),
+      onImport: (file) => void this.importSave(file),
+      onNewGame: () => void this.newGame(),
+    });
     this.powerOverlay = new PowerOverlayView(this.scene, this.world, this.sim.power);
     this.ghost = new GhostView(this.scene);
     this.sim.progress.onComplete = (seal) => this.announceSeal(seal);
@@ -223,6 +267,10 @@ export class Game {
       onToggleFactor: () => this.factorPanel.toggle(),
       onTogglePower: () => this.togglePowerOverlay(),
       onToggleStats: () => this.toggleStats(),
+      onToggleSave: () => {
+        this.savePanel.toggle();
+        this.refreshSaveStatus();
+      },
       onRotate: () => this.rotateBuilding(),
       onRotateView: (delta) => {
         this.rig.rotateYaw(delta * YAW_STEP);
@@ -260,6 +308,7 @@ export class Game {
         onToggleFactor: () => this.factorPanel.toggle(),
         onTogglePower: () => this.togglePowerOverlay(),
         onToggleStats: () => this.toggleStats(),
+        onSave: () => this.saveNow(true),
         onCancel: () => this.clearTool(),
       },
     });
@@ -270,10 +319,19 @@ export class Game {
     if (this.debug) this.exposeDebugHook();
 
     this.hud.setHint(
-      bench
-        ? '벤치마크 장면 — 순환 벨트 위를 아이템이 돌고 있습니다.'
-        : '채굴기를 광석 위에 놓고 컨베이어를 시브까지 드래그해 이으세요. R 방향, 우클릭 철거, Q/E 시점.',
+      startNotice ??
+        (bench
+          ? '벤치마크 장면 — 순환 벨트 위를 아이템이 돌고 있습니다.'
+          : save
+            ? '저장된 게임을 이어서 합니다.'
+            : '채굴기를 광석 위에 놓고 컨베이어를 시브까지 드래그해 이으세요. R 방향, 우클릭 철거, Q/E 시점.'),
     );
+
+    if (this.autosaving) {
+      this.autosaveTimer = window.setInterval(() => this.saveNow(false), AUTOSAVE_MS);
+      document.addEventListener('visibilitychange', this.onVisibility);
+      window.addEventListener('pagehide', this.onPageHide);
+    }
     this.refreshStock();
     this.refreshHud();
 
@@ -349,6 +407,9 @@ export class Game {
       /** Opens the panel as a click on the machine would. */
       selectMachine: (id: number): void => this.selectMachine(id),
       toggleStats: (): void => this.toggleStats(),
+      /** The save as the game would write it now. */
+      saveText: (): string => JSON.stringify(this.saveData()),
+      saveNow: (): void => this.saveNow(true),
       panelText: (which: 'inspector' | 'factor' | 'stats' | 'seal' | 'power'): string =>
         document.getElementById(`hud-${which}`)?.innerText.replace(/\n+/g, ' | ') ?? '',
       lights: (): number => this.machineStatus.count,
@@ -395,6 +456,9 @@ export class Game {
     this.disposed = true;
     this.renderer.setAnimationLoop(null);
     this.heartbeat.stop();
+    window.clearInterval(this.autosaveTimer);
+    document.removeEventListener('visibilitychange', this.onVisibility);
+    window.removeEventListener('pagehide', this.onPageHide);
     window.removeEventListener('resize', this.onResize);
     this.adapter.destroy();
     this.hud.destroy();
@@ -485,6 +549,7 @@ export class Game {
       this.refreshInspector();
       this.statsPanel.update(this.sim.stats);
       this.factorPanel.refresh();
+      this.refreshSaveStatus();
       // Hover text shows live values (a miner's buffer, say), so it needs re-reading
       // even when the cursor has not moved.
       this.refreshHud();
@@ -541,6 +606,85 @@ export class Game {
         ? { ...power, stranded, overlayOn: this.powerOverlayOn }
         : null,
     );
+  }
+
+  // ---------------------------------------------------------------- saving
+
+  private saveData(): SaveData {
+    return createSave(this.sim, this.seed, { lastRecipe: [...this.lastRecipe] });
+  }
+
+  /** Writes the autosave. `announce` is for a save the player asked for. */
+  private saveNow(announce: boolean): void {
+    if (!this.autosaving) return;
+    const text = JSON.stringify(this.saveData());
+    void writeAutosave(text).then((ok) => {
+      if (ok) this.lastSavedAt = Date.now();
+      if (announce) this.hud.setHint(ok ? '💾 저장했습니다.' : '⚠ 저장하지 못했습니다 (브라우저 저장소를 쓸 수 없음).');
+      this.refreshSaveStatus(!ok);
+    });
+  }
+
+  private onVisibility = (): void => {
+    if (document.hidden) this.saveNow(false);
+  };
+
+  /** The page is going away: an async write may not finish, so keep a synchronous copy too. */
+  private onPageHide = (): void => {
+    if (!this.autosaving) return;
+    const text = JSON.stringify(this.saveData());
+    writeAutosaveNow(text);
+    void writeAutosave(text);
+  };
+
+  private refreshSaveStatus(error = false): void {
+    if (!this.savePanel.visible) return;
+    if (error) {
+      this.savePanel.setStatus('마지막 저장에 실패했습니다', true);
+      return;
+    }
+    if (this.lastSavedAt === null) {
+      this.savePanel.setStatus('아직 저장하지 않았습니다');
+      return;
+    }
+    const seconds = Math.max(0, Math.round((Date.now() - this.lastSavedAt) / 1000));
+    const ago = seconds < 60 ? `${seconds}초 전` : `${Math.round(seconds / 60)}분 전`;
+    this.savePanel.setStatus(`마지막 저장: ${ago} · 봉인 ${this.sim.progress.level}/${this.sim.progress.seals.length}`);
+  }
+
+  private exportSave(): void {
+    const text = JSON.stringify(this.saveData());
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
+    const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `factorization-${stamp}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    this.hud.setHint('💾 세이브 파일을 내보냈습니다.');
+  }
+
+  /** Checks the file, makes it the autosave, and restarts into it. */
+  private async importSave(file: File): Promise<void> {
+    const text = await file.text();
+    try {
+      parseSave(text);
+    } catch (error) {
+      const reason = error instanceof SaveError ? error.message : '알 수 없는 오류';
+      this.savePanel.setStatus(`불러오기 실패: ${reason}`, true);
+      return;
+    }
+    // Stop autosaving first, or leaving this page would overwrite the file just loaded.
+    this.autosaving = false;
+    await clearAutosave();
+    await writeAutosave(text);
+    window.location.reload();
+  }
+
+  private async newGame(): Promise<void> {
+    this.autosaving = false;
+    await clearAutosave();
+    window.location.reload();
   }
 
   private toggleStats(): void {

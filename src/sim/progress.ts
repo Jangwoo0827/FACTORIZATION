@@ -50,6 +50,16 @@ export class Progress implements Availability {
     }
   }
 
+  exportState(): { level: number; sustainedSeconds: number } {
+    return { level: this.level, sustainedSeconds: this.sustainedSeconds };
+  }
+
+  /** Restores a saved level without announcing the seals again. */
+  importState(state: { level: number; sustainedSeconds: number }): void {
+    this.level = Math.max(0, Math.min(this.seals.length, Math.floor(state.level)));
+    this.sustainedSeconds = Math.max(0, state.sustainedSeconds);
+  }
+
   /** The seal being worked on, or null once every seal is open. */
   get active(): SealDef | null {
     return this.seals[this.level] ?? null;
